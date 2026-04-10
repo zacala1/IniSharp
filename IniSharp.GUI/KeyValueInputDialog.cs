@@ -1,0 +1,80 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.Text;
+using System.Threading.Tasks;
+
+namespace IniSharp.GUI
+{
+    public class KeyValueInputDialog : Form
+    {
+        private TextBox _keyTextBox;
+        private TextBox _valueTextBox;
+        private Button _okButton;
+        private Button _cancelButton;
+
+        public string Key => _keyTextBox.Text;
+        public string Value => _valueTextBox.Text;
+
+        public KeyValueInputDialog(string defaultKey = "", string defaultValue = "")
+        {
+            Text = "Key-Value Input";
+            Size = new Size(300, 200);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+            MaximizeBox = false;
+            MinimizeBox = false;
+
+            var keyLabel = new Label
+            {
+                Text = "Key:",
+                Location = new Point(10, 10),
+                Size = new Size(260, 20)
+            };
+
+            _keyTextBox = new TextBox
+            {
+                Location = new Point(10, 40),
+                Size = new Size(260, 20),
+                Text = defaultKey
+            };
+
+            var valueLabel = new Label
+            {
+                Text = "Value:",
+                Location = new Point(10, 70),
+                Size = new Size(260, 20)
+            };
+
+            _valueTextBox = new TextBox
+            {
+                Location = new Point(10, 100),
+                Size = new Size(260, 20),
+                Text = defaultValue
+            };
+
+            _okButton = new Button
+            {
+                Text = "OK",
+                DialogResult = DialogResult.OK,
+                Location = new Point(100, 130)
+            };
+
+            _cancelButton = new Button
+            {
+                Text = "Cancel",
+                DialogResult = DialogResult.Cancel,
+                Location = new Point(190, 130)
+            };
+
+            Controls.AddRange(new Control[] {
+            keyLabel, _keyTextBox,
+            valueLabel, _valueTextBox,
+            _okButton, _cancelButton
+        });
+
+            AcceptButton = _okButton;
+            CancelButton = _cancelButton;
+        }
+    }
+}

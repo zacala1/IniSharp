@@ -1,0 +1,28 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>13.0</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+
+    <!-- NuGet Package Metadata -->
+    <PackageId>IniSharp</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>zacala1</Authors>
+    <Copyright>Copyright (c) 2025 zacala1</Copyright>
+    <Description>A comprehensive INI configuration file parser and writer for .NET applications. Features include section/property management, comments preservation, schema validation, document comparison, and export to JSON/XML/CSV formats.</Description>
+    <PackageTags>ini;configuration;parser;config;settings;dotnet;csharp</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/zacala1/IniSharp</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/zacala1/IniSharp</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <None Include="..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

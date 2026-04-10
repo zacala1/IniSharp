@@ -1,0 +1,278 @@
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+
+namespace IniSharp.GUI
+{
+    public class FindReplaceDialog : Form
+    {
+        private TextBox _findTextBox = null!;
+        private TextBox _replaceTextBox = null!;
+        private CheckBox _matchCaseCheckBox = null!;
+        private CheckBox _useRegexCheckBox = null!;
+        private CheckBox _searchSectionsCheckBox = null!;
+        private CheckBox _searchKeysCheckBox = null!;
+        private CheckBox _searchValuesCheckBox = null!;
+        private Button _findNextButton = null!;
+        private Button _replaceButton = null!;
+        private Button _replaceAllButton = null!;
+        private Button _closeButton = null!;
+        private Label _statusLabel = null!;
+
+        public string FindText => _findTextBox.Text;
+        public string ReplaceText => _replaceTextBox.Text;
+        public bool MatchCase => _matchCaseCheckBox.Checked;
+        public bool UseRegex => _useRegexCheckBox.Checked;
+        public bool SearchSections => _searchSectionsCheckBox.Checked;
+        public bool SearchKeys => _searchKeysCheckBox.Checked;
+        public bool SearchValues => _searchValuesCheckBox.Checked;
+
+        public event EventHandler? FindNextClicked;
+        public event EventHandler? ReplaceClicked;
+        public event EventHandler? ReplaceAllClicked;
+
+        public FindReplaceDialog()
+        {
+            InitializeComponents();
+        }
+
+        private void InitializeComponents()
+        {
+            Text = "Find and Replace";
+            Size = new Size(450, 420);
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            StartPosition = FormStartPosition.CenterParent;
+            MaximizeBox = false;
+            MinimizeBox = false;
+
+            int y = 20;
+
+            // Find
+            var findLabel = new Label
+            {
+                Text = "Find what:",
+                Location = new Point(20, y),
+                Size = new Size(80, 20)
+            };
+
+            _findTextBox = new TextBox
+            {
+                Location = new Point(110, y),
+                Size = new Size(300, 20)
+            };
+
+            y += 35;
+
+            // Replace
+            var replaceLabel = new Label
+            {
+                Text = "Replace with:",
+                Location = new Point(20, y),
+                Size = new Size(80, 20)
+            };
+
+            _replaceTextBox = new TextBox
+            {
+                Location = new Point(110, y),
+                Size = new Size(300, 20)
+            };
+
+            y += 35;
+
+            // Options GroupBox
+            var optionsGroup = new GroupBox
+            {
+                Text = "Options",
+                Location = new Point(20, y),
+                Size = new Size(390, 130)
+            };
+
+            _matchCaseCheckBox = new CheckBox
+            {
+                Text = "Match case",
+                Location = new Point(10, 20),
+                Size = new Size(180, 20)
+            };
+
+            _useRegexCheckBox = new CheckBox
+            {
+                Text = "Use regular expressions",
+                Location = new Point(10, 45),
+                Size = new Size(180, 20)
+            };
+            _useRegexCheckBox.CheckedChanged += OnRegexCheckChanged;
+
+            var searchInLabel = new Label
+            {
+                Text = "Search in:",
+                Location = new Point(10, 75),
+                Size = new Size(80, 20),
+                Font = new Font(Font, FontStyle.Bold)
+            };
+
+            _searchSectionsCheckBox = new CheckBox
+            {
+                Text = "Section names",
+                Location = new Point(100, 75),
+                Size = new Size(120, 20),
+                Checked = true
+            };
+
+            _searchKeysCheckBox = new CheckBox
+            {
+                Text = "Key names",
+                Location = new Point(220, 75),
+                Size = new Size(100, 20),
+                Checked = true
+            };
+
+            _searchValuesCheckBox = new CheckBox
+            {
+                Text = "Values",
+                Location = new Point(320, 75),
+                Size = new Size(60, 20),
+                Checked = true
+            };
+
+            optionsGroup.Controls.AddRange(new Control[]
+            {
+                _matchCaseCheckBox,
+                _useRegexCheckBox,
+                searchInLabel,
+                _searchSectionsCheckBox,
+                _searchKeysCheckBox,
+                _searchValuesCheckBox
+            });
+
+            y += 140;
+
+            // Status Label
+            _statusLabel = new Label
+            {
+                Text = "",
+                Location = new Point(20, y),
+                Size = new Size(390, 20),
+                ForeColor = Color.FromArgb(0, 0, 139) // Dark blue for better contrast
+            };
+
+            y += 30;
+
+            // Buttons
+            _findNextButton = new Button
+            {
+                Text = "Find Next",
+                Location = new Point(20, y),
+                Size = new Size(90, 30)
+            };
+            _findNextButton.Click += (s, e) =>
+            {
+                if (ValidateSearch())
+                    FindNextClicked?.Invoke(this, EventArgs.Empty);
+            };
+
+            _replaceButton = new Button
+            {
+                Text = "Replace",
+                Location = new Point(120, y),
+                Size = new Size(90, 30)
+            };
+            _replaceButton.Click += (s, e) =>
+            {
+                if (ValidateSearch())
+                    ReplaceClicked?.Invoke(this, EventArgs.Empty);
+            };
+
+            _replaceAllButton = new Button
+            {
+                Text = "Replace All",
+                Location = new Point(220, y),
+                Size = new Size(90, 30)
+            };
+            _replaceAllButton.Click += (s, e) =>
+            {
+                if (ValidateSearch())
+                    ReplaceAllClicked?.Invoke(this, EventArgs.Empty);
+            };
+
+            _closeButton = new Button
+            {
+                Text = "Close",
+                Location = new Point(320, y),
+                Size = new Size(90, 30)
+            };
+            _closeButton.Click += (s, e) => Close();
+
+            Controls.AddRange(new Control[]
+            {
+                findLabel, _findTextBox,
+                replaceLabel, _replaceTextBox,
+                optionsGroup,
+                _statusLabel,
+                _findNextButton, _replaceButton, _replaceAllButton, _closeButton
+            });
+
+            _findTextBox.TextChanged += (s, e) => _statusLabel.Text = "";
+            CancelButton = _closeButton;
+        }
+
+        private void OnRegexCheckChanged(object? sender, EventArgs e)
+        {
+            if (_useRegexCheckBox.Checked)
+            {
+                SetStatus("Regex enabled. Examples: \\d+ (numbers), [a-z]+ (lowercase), .* (anything)", false);
+            }
+            else
+            {
+                ClearStatus();
+            }
+        }
+
+        private bool ValidateSearch()
+        {
+            if (string.IsNullOrWhiteSpace(_findTextBox.Text))
+            {
+                MessageBox.Show("Please enter text to find.", "Find",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                _findTextBox.Focus();
+                return false;
+            }
+
+            if (!SearchSections && !SearchKeys && !SearchValues)
+            {
+                MessageBox.Show("Please select at least one search location.", "Find",
+                    MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return false;
+            }
+
+            // Validate regex pattern if regex is enabled
+            if (UseRegex)
+            {
+                try
+                {
+                    _ = new System.Text.RegularExpressions.Regex(_findTextBox.Text);
+                }
+                catch (System.ArgumentException ex)
+                {
+                    MessageBox.Show($"Invalid regular expression:\n{ex.Message}", "Regex Error",
+                        MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    _findTextBox.Focus();
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        public void SetStatus(string message, bool isError = false)
+        {
+            _statusLabel.Text = message;
+            // Use darker colors for better contrast (WCAG AA compliance)
+            _statusLabel.ForeColor = isError ? Color.FromArgb(180, 0, 0) : Color.FromArgb(0, 0, 139);
+        }
+
+        public void ClearStatus()
+        {
+            _statusLabel.Text = "";
+        }
+    }
+}
