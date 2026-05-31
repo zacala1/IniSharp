@@ -96,10 +96,11 @@ namespace IniSharp
                 var commentSign = span.IndexOfAny(doc.CommentPrefixChars);
                 if (commentSign == 0)
                 {
+                    var commentPrefix = span[commentSign].ToString();
                     var commentString = span.Slice(1).ToString();
                     if (option.MaxPendingComments > 0 && pendingComments.Count >= option.MaxPendingComments)
                         pendingComments.Dequeue();
-                    pendingComments.Enqueue(new Comment(commentString));
+                    pendingComments.Enqueue(new Comment(commentPrefix, commentString));
                     continue;
                 }
 
@@ -119,24 +120,26 @@ namespace IniSharp
                         continue;
                     }
 
-                    try { currentSection = new Section(sectionName); }
+                    Section parsedSection;
+                    try { parsedSection = new Section(sectionName); }
                     catch (ArgumentException ex)
                     {
-                        if (option.CollectParsingErrors)
-                            doc.AddParsingError(new ParsingErrorEventArgs(lineNumber, line, $"Invalid section name: {ex.Message}"));
+                        ReportError(doc, option, lineNumber, line, $"Invalid section name: {ex.Message}");
                         continue;
-                    }
-
-                    if (pendingComments.Count > 0)
-                    {
-                        currentSection.PreComments.AddRange(pendingComments);
-                        pendingComments.Clear();
                     }
 
                     var afterSection = span.Slice(closeBracket + 1).TrimStart();
                     commentSign = afterSection.IndexOfAny(doc.CommentPrefixChars);
                     if (commentSign == 0)
-                        currentSection.Comment = new Comment(afterSection.Slice(1).ToString());
+                    {
+                        var commentPrefix = afterSection[commentSign].ToString();
+                        parsedSection.Comment = new Comment(commentPrefix, afterSection.Slice(1).ToString());
+                    }
+                    else if (!afterSection.IsEmpty)
+                    {
+                        ReportError(doc, option, lineNumber, line, "Invalid content after section declaration");
+                        continue;
+                    }
 
                     if (option.MaxSections > 0 && doc.SectionCount >= option.MaxSections)
                     {
@@ -144,11 +147,20 @@ namespace IniSharp
                         continue;
                     }
 
+                    if (pendingComments.Count > 0)
+                    {
+                        parsedSection.PreComments.AddRange(pendingComments);
+                        pendingComments.Clear();
+                    }
+
+                    currentSection = parsedSection;
                     doc.AddSectionInternal(currentSection);
                     continue;
                 }
 
                 var equalSign = span.IndexOf('=');
+                if (equalSign == -1)
+                    equalSign = span.IndexOf(':');
                 if (equalSign == -1)
                 {
                     ReportError(doc, option, lineNumber, line, "Missing equals sign in key-value pair");
@@ -165,6 +177,7 @@ namespace IniSharp
                 var valueStart = span.Slice(equalSign + 1).TrimStart();
                 bool isQuoted = false;
                 string value, comment = string.Empty;
+                string propertyCommentPrefix = doc.DefaultCommentPrefixChar.ToString();
 
                 if (valueStart.IsEmpty)
                 {
@@ -214,7 +227,12 @@ namespace IniSharp
                     value = sb.ToString();
                     remains = remains.TrimStart();
                     commentSign = remains.IndexOfAny(doc.CommentPrefixChars);
-                    if (commentSign == 0) { comment = remains.Slice(1).ToString(); remains = []; }
+                    if (commentSign == 0)
+                    {
+                        propertyCommentPrefix = remains[commentSign].ToString();
+                        comment = remains.Slice(1).ToString();
+                        remains = [];
+                    }
                     else if (commentSign > 0) { ReportError(doc, option, lineNumber, line, "Invalid content after closing quote"); continue; }
 
                     remains = remains.Trim();
@@ -225,6 +243,7 @@ namespace IniSharp
                     commentSign = valueStart.IndexOfAny(doc.CommentPrefixChars);
                     if (commentSign >= 0)
                     {
+                        propertyCommentPrefix = valueStart[commentSign].ToString();
                         value = valueStart.Slice(0, commentSign).TrimEnd().ToString();
                         comment = valueStart.Slice(commentSign + 1).ToString();
                     }
@@ -256,7 +275,7 @@ namespace IniSharp
                 }
 
                 if (!string.IsNullOrEmpty(comment))
-                    property.Comment = new Comment(comment);
+                    property.Comment = new Comment(propertyCommentPrefix, comment);
 
                 currentSection.AddPropertyInternal(property);
             }
@@ -380,12 +399,99 @@ namespace IniSharp
 
             cancellationToken.ThrowIfCancellationRequested();
 
-            // Use synchronous Save into a MemoryStream, then copy asynchronously
-            // This avoids duplicating the entire write logic while still providing true async I/O
-            using var buffer = new MemoryStream();
-            Save(buffer, encoding, document, options ?? SaveOptions.Default);
-            buffer.Position = 0;
-            await buffer.CopyToAsync(stream, BufferSize, cancellationToken).ConfigureAwait(false);
+            options ??= SaveOptions.Default;
+            using var writer = new StreamWriter(stream, encoding, BufferSize, leaveOpen: true);
+
+            foreach (var property in document.DefaultSection.GetProperties())
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                foreach (var comment in property.PreComments)
+                {
+                    WriteCommentPrefix(writer, comment, document, options);
+                    await writer.WriteLineAsync(comment.Value).ConfigureAwait(false);
+                }
+
+                WriteProperty(writer, property, document, options);
+                await writer.WriteLineAsync().ConfigureAwait(false);
+            }
+
+            if (document.DefaultSection.PropertyCount > 0 &&
+                document.SectionCount > 0 &&
+                options.BlankLineAfterDefaultSection)
+            {
+                await writer.WriteLineAsync().ConfigureAwait(false);
+            }
+
+            for (var indexSection = 0; indexSection < document.SectionCount; indexSection++)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var section = document[indexSection];
+                foreach (var comment in section.PreComments)
+                {
+                    WriteCommentPrefix(writer, comment, document, options);
+                    await writer.WriteLineAsync(comment.Value).ConfigureAwait(false);
+                }
+
+                writer.Write('[');
+                writer.Write(section.Name);
+                writer.Write(']');
+                if (!string.IsNullOrEmpty(section.Comment?.Value))
+                {
+                    WriteInlineCommentPrefix(writer, section.Comment, document, options);
+                    writer.Write(section.Comment.Value);
+                }
+
+                foreach (var property in section.GetProperties())
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+
+                    await writer.WriteLineAsync().ConfigureAwait(false);
+                    foreach (var comment in property.PreComments)
+                    {
+                        WriteCommentPrefix(writer, comment, document, options);
+                        await writer.WriteLineAsync(comment.Value).ConfigureAwait(false);
+                    }
+
+                    WriteProperty(writer, property, document, options);
+                }
+
+                await writer.WriteLineAsync().ConfigureAwait(false);
+                if (indexSection < document.SectionCount - 1)
+                {
+                    for (int i = 0; i < options.BlankLinesBetweenSections; i++)
+                    {
+                        await writer.WriteLineAsync().ConfigureAwait(false);
+                    }
+                }
+            }
+
+            await writer.FlushAsync(cancellationToken).ConfigureAwait(false);
+        }
+
+        private static void WriteProperty(TextWriter writer, Property property, Document document, SaveOptions options)
+        {
+            var shouldQuote = property.IsQuoted || NeedsQuoting(property.Value);
+
+            writer.Write(property.Name);
+            writer.Write(options.KeyValueSeparator);
+            if (shouldQuote)
+            {
+                writer.Write('"');
+                WriteEscapedValue(writer, property.Value);
+                writer.Write('"');
+            }
+            else
+            {
+                writer.Write(property.Value);
+            }
+
+            if (!string.IsNullOrEmpty(property.Comment?.Value))
+            {
+                WriteInlineCommentPrefix(writer, property.Comment, document, options);
+                writer.Write(property.Comment.Value);
+            }
         }
     }
 }

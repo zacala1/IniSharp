@@ -24,10 +24,18 @@ namespace IniSharp
         /// Initializes a new instance of the <see cref="Section"/> class with the specified name.
         /// </summary>
         /// <param name="name">The name of the section.</param>
-        public Section(string name) : base(name)
+        public Section(string name) : base(ValidateName(name))
         {
             _properties = new List<Property>();
             _propertyLookup = new Dictionary<string, Property>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        private static string ValidateName(string name)
+        {
+            if (name != null && name.AsSpan().IndexOfAny('[', ']') >= 0)
+                throw new ArgumentException("Section name cannot contain brackets", nameof(name));
+
+            return name!;
         }
 
         /// <summary>
@@ -492,7 +500,7 @@ namespace IniSharp
         /// Gets a read-only collection of all properties in the section.
         /// </summary>
         /// <returns>A read-only list of properties.</returns>
-        public IReadOnlyList<Property> GetProperties() => _properties;
+        public IReadOnlyList<Property> GetProperties() => _properties.AsReadOnly();
 
         internal List<Property> GetInternalProperties() => _properties;
 

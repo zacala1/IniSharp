@@ -246,6 +246,14 @@ namespace IniSharp
                             property.Name));
                     }
                 }
+                else
+                {
+                    result.AddError(new SchemaValidationError(
+                        SchemaErrorType.TypeMismatch,
+                        $"Property '{property.Name}' in section '{sectionName}' must be numeric for range validation.",
+                        sectionName,
+                        property.Name));
+                }
             }
         }
 

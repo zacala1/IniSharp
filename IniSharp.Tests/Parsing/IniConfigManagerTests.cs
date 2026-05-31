@@ -481,12 +481,12 @@ key2=""value with \t tab""";
             // Assert - normalize line endings for cross-platform compatibility
             // Saved files always end with a trailing newline (POSIX standard)
             var expected = @"[Section1]
-key1 = ""simple value"" ; comment1
+key1 = ""simple value"" # comment1
 key2 = ""value with \""quote\"""" ; comment2
-key3 = unquoted value ; comment3
+key3 = unquoted value # comment3
 
 [Section2]
-; Pre-comment
+# Pre-comment
 key1 = ""value with \n newline""
 key2 = ""value with \t tab""
 ";
@@ -515,8 +515,10 @@ key3=""value with ; not a comment"" ; actual comment
                 Assert.That(section.GetProperty("key1")?.Value, Is.EqualTo("value with # not a comment"));
                 Assert.That(section.GetProperty("key2")?.Value, Is.EqualTo("quoted value"));
                 Assert.That(section.GetProperty("key2")?.Comment?.Value, Is.EqualTo(" actual comment"));
+                Assert.That(section.GetProperty("key2")?.Comment?.Prefix, Is.EqualTo("#"));
                 Assert.That(section.GetProperty("key3")?.Value, Is.EqualTo("value with ; not a comment"));
                 Assert.That(section.GetProperty("key3")?.Comment?.Value, Is.EqualTo(" actual comment"));
+                Assert.That(section.GetProperty("key3")?.Comment?.Prefix, Is.EqualTo(";"));
             });
         }
 
@@ -1686,6 +1688,28 @@ key2=value2";
         }
 
         [Test]
+        public async Task LoadAsync_SectionHeaderWithTrailingContent_CollectsErrorAndSkipsSection()
+        {
+            // Arrange
+            var content = "[Section] invalid\nkey=value";
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
+            var options = new IniConfigOption { CollectParsingErrors = true };
+
+            // Act
+            var doc = await IniConfigManager.LoadAsync(stream, Encoding.UTF8, options);
+
+            // Assert
+            Assert.Multiple(() =>
+            {
+                Assert.That(doc.ParsingErrors, Has.Count.EqualTo(1));
+                Assert.That(doc.ParsingErrors[0].LineNumber, Is.EqualTo(1));
+                Assert.That(doc.ParsingErrors[0].Reason, Is.EqualTo("Invalid content after section declaration"));
+                Assert.That(doc.HasSection("Section"), Is.False);
+                Assert.That(doc.DefaultSection.GetProperty("key")?.Value, Is.EqualTo("value"));
+            });
+        }
+
+        [Test]
         public async Task SaveAsync_BasicDocument_SavesAndLoadsCorrectly()
         {
             // Arrange
@@ -1705,6 +1729,39 @@ key2=value2";
                 Assert.That(loadedDoc["Section1"]["key1"].Value, Is.EqualTo("value1"));
                 Assert.That(loadedDoc["Section1"]["key2"].Value, Is.EqualTo("value2"));
             });
+        }
+
+        [Test]
+        public async Task SaveAsync_WithFormattingOptions_MatchesSynchronousSave()
+        {
+            // Arrange
+            var doc = new Document();
+            doc.DefaultSection.AddProperty(new Property("path", " C:\\Temp\\file.ini ") { IsQuoted = true });
+            var section = doc["Section1"];
+            section.PreComments.Add(new Comment("#", " section comment"));
+            section.Comment = new Comment("#", " inline section");
+            var property = new Property("key", "value;with#comment");
+            property.PreComments.Add(new Comment("#", " property comment"));
+            property.Comment = new Comment("#", " inline property");
+            section.AddProperty(property);
+
+            var options = new SaveOptions
+            {
+                KeyValueSeparator = ":",
+                BlankLineAfterDefaultSection = true,
+                BlankLinesBetweenSections = 2,
+                SpaceBeforeInlineComment = false
+            };
+
+            using var syncStream = new MemoryStream();
+            using var asyncStream = new MemoryStream();
+
+            // Act
+            IniConfigManager.Save(syncStream, Encoding.UTF8, doc, options);
+            await IniConfigManager.SaveAsync(asyncStream, Encoding.UTF8, doc, options);
+
+            // Assert
+            Assert.That(Encoding.UTF8.GetString(asyncStream.ToArray()), Is.EqualTo(Encoding.UTF8.GetString(syncStream.ToArray())));
         }
 
         [Test]

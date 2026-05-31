@@ -209,6 +209,27 @@ namespace IniSharp.Tests.Core
         }
 
         [Test]
+        public void ReadOnlyAccessors_DoNotExposeMutableBackingLists()
+        {
+            // Arrange
+            var section = _document[TEST_SECTION_NAME];
+            section.AddProperty("Key", "Value");
+
+            // Act
+            var sections = _document.GetSections();
+            var properties = section.GetProperties();
+
+            // Assert
+            Assert.Multiple(() =>
+            {
+                Assert.That(sections, Is.Not.TypeOf<List<Section>>());
+                Assert.That(properties, Is.Not.TypeOf<List<Property>>());
+                Assert.That(sections as List<Section>, Is.Null);
+                Assert.That(properties as List<Property>, Is.Null);
+            });
+        }
+
+        [Test]
         public void SortAllByName_SortsBothSectionsAndProperties()
         {
             // Arrange

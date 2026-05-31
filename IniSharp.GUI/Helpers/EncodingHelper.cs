@@ -28,14 +28,17 @@ namespace IniSharp.GUI
                 if (bytesRead >= 3 && bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF)
                     return Encoding.UTF8; // UTF-8 with BOM
 
+                if (bytesRead >= 4 && bom[0] == 0xFF && bom[1] == 0xFE && bom[2] == 0x00 && bom[3] == 0x00)
+                    return Encoding.UTF32; // UTF-32 LE
+
+                if (bytesRead >= 4 && bom[0] == 0x00 && bom[1] == 0x00 && bom[2] == 0xFE && bom[3] == 0xFF)
+                    return new UTF32Encoding(bigEndian: true, byteOrderMark: true); // UTF-32 BE
+
                 if (bytesRead >= 2 && bom[0] == 0xFF && bom[1] == 0xFE)
                     return Encoding.Unicode; // UTF-16 LE
 
                 if (bytesRead >= 2 && bom[0] == 0xFE && bom[1] == 0xFF)
                     return Encoding.BigEndianUnicode; // UTF-16 BE
-
-                if (bytesRead >= 4 && bom[0] == 0xFF && bom[1] == 0xFE && bom[2] == 0x00 && bom[3] == 0x00)
-                    return Encoding.UTF32; // UTF-32 LE
 
                 // No BOM detected, try to detect encoding by content
                 file.Position = 0;

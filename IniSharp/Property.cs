@@ -50,9 +50,17 @@ namespace IniSharp
         /// </summary>
         /// <param name="name">The name (key) of the property.</param>
         /// <param name="value">The value of the property.</param>
-        public Property(string name, string value) : base(name)
+        public Property(string name, string value) : base(ValidateName(name))
         {
             _value = value ?? string.Empty;
+        }
+
+        private static string ValidateName(string name)
+        {
+            if (name != null && name.Contains('='))
+                throw new ArgumentException("Property key cannot contain equals sign", nameof(name));
+
+            return name!;
         }
 
         /// <summary>
@@ -160,6 +168,12 @@ namespace IniSharp
                 if (DateTime.TryParse(_value, out var dateVal))
                     return (T)(object)dateVal;
                 throw new FormatException($"Cannot convert '{_value}' to DateTime");
+            }
+            if (typeof(T) == typeof(DateTimeOffset))
+            {
+                if (DateTimeOffset.TryParse(_value, out var dateTimeOffsetVal))
+                    return (T)(object)dateTimeOffsetVal;
+                throw new FormatException($"Cannot convert '{_value}' to DateTimeOffset");
             }
             if (typeof(T) == typeof(Guid))
             {
@@ -297,13 +311,22 @@ namespace IniSharp
 
                 try
                 {
-                    values.Add((T)Convert.ChangeType(valueStr, typeof(T)));
+                    values.Add(ConvertArrayElement<T>(valueStr));
                 }
-                catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException)
+                catch (Exception ex) when (ex is InvalidCastException or FormatException or OverflowException or ArgumentException)
                 {
                     throw new FormatException($"Cannot convert array element '{valueStr}' to type {typeof(T).Name}", ex);
                 }
             }
+        }
+
+        private static T ConvertArrayElement<T>(string value)
+        {
+            var targetType = typeof(T);
+            if (targetType.IsEnum)
+                return (T)Enum.Parse(targetType, value, ignoreCase: true);
+
+            return new Property("_", value).GetValue<T>();
         }
 
         /// <summary>
@@ -352,7 +375,7 @@ namespace IniSharp
                 string valueStr = Convert.ToString(values[i]) ?? string.Empty;
 
                 // Check if the value needs to be quoted
-                bool needsQuotes = valueStr.AsSpan().IndexOfAny(specialChars) >= 0;
+                bool needsQuotes = valueStr.Length == 0 || valueStr.AsSpan().IndexOfAny(specialChars) >= 0;
 
                 if (needsQuotes)
                 {

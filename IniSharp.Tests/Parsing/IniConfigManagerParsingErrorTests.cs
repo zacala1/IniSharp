@@ -59,6 +59,28 @@ namespace IniSharp.Tests.Parsing
         }
 
         [Test]
+        public void Parse_SectionHeaderWithTrailingContent_RaisesParsingErrorAndSkipsSection()
+        {
+            // Arrange
+            var content = "[Section] invalid\nkey=value";
+            var stream = new MemoryStream(Encoding.UTF8.GetBytes(content));
+
+            // Act
+            var doc = IniConfigManager.Load(stream, Encoding.UTF8);
+
+            // Assert
+            Assert.That(_errors, Has.Count.EqualTo(1));
+            AssertError(
+                _errors[0],
+                lineNumber: 1,
+                line: "[Section] invalid",
+                reason: "Invalid content after section declaration"
+            );
+            Assert.That(doc.HasSection("Section"), Is.False);
+            Assert.That(doc.DefaultSection.GetProperty("key")?.Value, Is.EqualTo("value"));
+        }
+
+        [Test]
         public void Parse_MissingEqualsSign_RaisesParsingError()
         {
             // Arrange

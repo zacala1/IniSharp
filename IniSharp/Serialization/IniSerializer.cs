@@ -303,6 +303,20 @@ namespace IniSharp.Serialization
                         prop.SetValue(obj, guidValue);
                     }
                 }
+                else if (targetType == typeof(DateTimeOffset))
+                {
+                    // Handle DateTimeOffset (not supported by Convert.ChangeType)
+                    if (string.IsNullOrEmpty(iniProperty.Value))
+                    {
+                        if (underlyingType != null)
+                            prop.SetValue(obj, null);
+                    }
+                    else
+                    {
+                        var dateTimeOffsetValue = DateTimeOffset.Parse(iniProperty.Value);
+                        prop.SetValue(obj, dateTimeOffsetValue);
+                    }
+                }
                 else if (underlyingType != null)
                 {
                     // Nullable type (non-enum)

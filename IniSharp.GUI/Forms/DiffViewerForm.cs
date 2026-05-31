@@ -569,12 +569,28 @@ namespace IniSharp.GUI.Forms
 
             if (result.TotalChanges > 0)
             {
+                MergeResult = MergeResult == null
+                    ? result
+                    : CombineMergeResults(MergeResult, result);
+
                 MessageBox.Show($"Applied {result.TotalChanges} change(s).", "Merge", MessageBoxButtons.OK, MessageBoxIcon.Information);
 
                 // Recalculate diff and refresh tree
                 var newDiff = _leftDocument.Compare(_rightDocument);
                 UpdateDiffFromNewComparison(newDiff);
             }
+        }
+
+        private static MergeResult CombineMergeResults(MergeResult first, MergeResult second)
+        {
+            return new MergeResult
+            {
+                SectionsAdded = first.SectionsAdded + second.SectionsAdded,
+                SectionsRemoved = first.SectionsRemoved + second.SectionsRemoved,
+                PropertiesAdded = first.PropertiesAdded + second.PropertiesAdded,
+                PropertiesRemoved = first.PropertiesRemoved + second.PropertiesRemoved,
+                PropertiesModified = first.PropertiesModified + second.PropertiesModified
+            };
         }
 
         private DocumentDiff CreatePartialDiff(DiffItem item)

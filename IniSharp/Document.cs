@@ -383,7 +383,7 @@ namespace IniSharp
         /// Gets a read-only collection of all sections in the document.
         /// </summary>
         /// <returns>A read-only list of sections.</returns>
-        public IReadOnlyList<Section> GetSections() => _sections;
+        public IReadOnlyList<Section> GetSections() => _sections.AsReadOnly();
 
         internal List<Section> GetInternalSections() => _sections;
 

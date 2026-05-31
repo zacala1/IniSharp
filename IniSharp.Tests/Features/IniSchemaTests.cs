@@ -320,6 +320,26 @@ namespace IniSharp.Tests.Features
         }
 
         [Test]
+        public void Validate_NonNumericValueWithRange_ReturnsTypeMismatch()
+        {
+            // Arrange
+            var schema = new IniSchema();
+            var sectionDef = schema.DefineSection("Settings");
+            sectionDef.DefineProperty("Port")
+                .WithRange(min: 1, max: 65535);
+
+            var doc = new Document();
+            doc["Settings"].AddProperty("Port", "abc");
+
+            // Act
+            var result = schema.Validate(doc);
+
+            // Assert
+            Assert.IsFalse(result.IsValid);
+            Assert.AreEqual(SchemaErrorType.TypeMismatch, result.Errors[0].ErrorType);
+        }
+
+        [Test]
         public void Validate_ValueInRange_ReturnsValid()
         {
             // Arrange

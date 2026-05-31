@@ -243,6 +243,26 @@ namespace IniSharp.Tests.Features
         }
 
         [Test]
+        public void ToXml_IncludeComments_SanitizesInvalidXmlCommentText()
+        {
+            // Arrange
+            var doc = new Document();
+            var prop = new Property("Key", "Value");
+            prop.PreComments.Add(new Comment("bad -- comment-"));
+            doc["Section"].AddProperty(prop);
+
+            var options = new XmlExportOptions { IncludeComments = true };
+
+            // Act
+            var xml = DocumentExporter.ToXml(doc, options);
+
+            // Assert
+            Assert.IsTrue(xml.Contains("<!--bad - - comment- -->"));
+            var xmlDoc = new XmlDocument();
+            xmlDoc.LoadXml(xml);
+        }
+
+        [Test]
         public void ToXml_NullDocument_ThrowsArgumentNullException()
         {
             // Act & Assert

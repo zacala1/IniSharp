@@ -50,6 +50,12 @@ namespace IniSharp.Tests.Core
         }
 
         [Test]
+        public void Constructor_WithEqualsSignInName_ThrowsArgumentException()
+        {
+            Assert.Throws<ArgumentException>(() => new Property("key=value"));
+        }
+
+        [Test]
         public void Constructor_WithLeadingWhitespace_ThrowsArgumentException()
         {
             // Arrange & Act & Assert
@@ -228,6 +234,19 @@ namespace IniSharp.Tests.Core
         }
 
         [Test]
+        public void GetValue_DateTimeOffset_ValidInput_ReturnsParsedValue()
+        {
+            // Arrange
+            _property.Value = "2025-01-15T10:30:00+09:00";
+
+            // Act
+            var result = _property.GetValue<DateTimeOffset>();
+
+            // Assert
+            Assert.That(result, Is.EqualTo(DateTimeOffset.Parse("2025-01-15T10:30:00+09:00")));
+        }
+
+        [Test]
         public void GetValue_InvalidInput_ThrowsFormatException()
         {
             // Arrange
@@ -334,6 +353,37 @@ namespace IniSharp.Tests.Core
 
             // Assert
             Assert.That(_property.Value, Is.EqualTo("{1, 2, 3}"));
+        }
+
+        [Test]
+        public void SetValueArray_WithEmptyString_PreservesElementOnRoundTrip()
+        {
+            // Arrange
+            var array = new[] { "a", "", "b" };
+
+            // Act
+            _property.SetValueArray(array);
+            var result = _property.GetValueArray<string>();
+
+            // Assert
+            Assert.Multiple(() =>
+            {
+                Assert.That(_property.Value, Is.EqualTo("{a, \"\", b}"));
+                Assert.That(result, Is.EqualTo(array));
+            });
+        }
+
+        [Test]
+        public void GetValueArray_BooleanAliases_UsesScalarConversionRules()
+        {
+            // Arrange
+            _property.Value = "{yes, no, 1, 0}";
+
+            // Act
+            var result = _property.GetValueArray<bool>();
+
+            // Assert
+            Assert.That(result, Is.EqualTo(new[] { true, false, true, false }));
         }
 
         [Test]

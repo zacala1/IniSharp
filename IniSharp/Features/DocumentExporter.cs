@@ -290,12 +290,12 @@ namespace IniSharp
             {
                 foreach (var comment in section.PreComments)
                 {
-                    writer.WriteComment(comment.Value);
+                    WriteXmlComment(writer, comment.Value);
                 }
 
                 if (section.Comment != null)
                 {
-                    writer.WriteComment($"Inline: {section.Comment.Value}");
+                    WriteXmlComment(writer, $"Inline: {section.Comment.Value}");
                 }
             }
 
@@ -313,7 +313,7 @@ namespace IniSharp
             {
                 foreach (var comment in property.PreComments)
                 {
-                    writer.WriteComment(comment.Value);
+                    WriteXmlComment(writer, comment.Value);
                 }
             }
 
@@ -335,6 +335,33 @@ namespace IniSharp
             }
 
             writer.WriteEndElement();
+        }
+
+        private static void WriteXmlComment(XmlWriter writer, string value)
+        {
+            writer.WriteComment(SanitizeXmlComment(value));
+        }
+
+        private static string SanitizeXmlComment(string value)
+        {
+            if (string.IsNullOrEmpty(value))
+                return string.Empty;
+
+            var builder = new StringBuilder(value.Length);
+            for (int i = 0; i < value.Length; i++)
+            {
+                var c = value[i];
+                if (XmlConvert.IsXmlChar(c))
+                {
+                    builder.Append(c);
+                }
+            }
+
+            var sanitized = builder.ToString().Replace("--", "- -");
+            if (sanitized.EndsWith("-", StringComparison.Ordinal))
+                sanitized += " ";
+
+            return sanitized;
         }
 
         private static string MakeValidXmlName(string name)

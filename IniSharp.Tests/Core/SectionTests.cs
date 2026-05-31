@@ -31,6 +31,16 @@ namespace IniSharp.Tests.Core
         }
 
         [Test]
+        public void Constructor_WithBracketInName_ThrowsArgumentException()
+        {
+            Assert.Multiple(() =>
+            {
+                Assert.Throws<ArgumentException>(() => new Section("Invalid[Name"));
+                Assert.Throws<ArgumentException>(() => new Section("Invalid]Name"));
+            });
+        }
+
+        [Test]
         public void PropertyCount_ReflectsActualCount()
         {
             // Arrange & Act

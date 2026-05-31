@@ -132,6 +132,8 @@ namespace IniSharp.Tests.Serialization
         public class ConfigWithDateTime
         {
             public DateTime CreatedAt { get; set; }
+            public DateTimeOffset LastUpdated { get; set; }
+            public DateTimeOffset? OptionalUpdated { get; set; }
             public TimeSpan Timeout { get; set; }
             public Guid Id { get; set; }
             public decimal Price { get; set; }
@@ -556,6 +558,8 @@ namespace IniSharp.Tests.Serialization
             // Arrange
             var doc = new Document();
             doc.DefaultSection.AddProperty("CreatedAt", "2025-01-15T10:30:00");
+            doc.DefaultSection.AddProperty("LastUpdated", "2025-01-15T10:30:00+09:00");
+            doc.DefaultSection.AddProperty("OptionalUpdated", "2025-01-16T11:45:00-05:00");
             doc.DefaultSection.AddProperty("Timeout", "00:05:30");
             doc.DefaultSection.AddProperty("Id", "a1b2c3d4-e5f6-7890-abcd-ef1234567890");
             doc.DefaultSection.AddProperty("Price", "123.45");
@@ -565,6 +569,8 @@ namespace IniSharp.Tests.Serialization
 
             // Assert
             Assert.That(config.CreatedAt, Is.EqualTo(new DateTime(2025, 1, 15, 10, 30, 0)));
+            Assert.That(config.LastUpdated, Is.EqualTo(DateTimeOffset.Parse("2025-01-15T10:30:00+09:00")));
+            Assert.That(config.OptionalUpdated, Is.EqualTo(DateTimeOffset.Parse("2025-01-16T11:45:00-05:00")));
             Assert.That(config.Timeout, Is.EqualTo(TimeSpan.FromMinutes(5).Add(TimeSpan.FromSeconds(30))));
             Assert.That(config.Id, Is.EqualTo(Guid.Parse("a1b2c3d4-e5f6-7890-abcd-ef1234567890")));
             Assert.That(config.Price, Is.EqualTo(123.45m));
@@ -577,6 +583,8 @@ namespace IniSharp.Tests.Serialization
             var config = new ConfigWithDateTime
             {
                 CreatedAt = new DateTime(2025, 1, 15, 10, 30, 0),
+                LastUpdated = DateTimeOffset.Parse("2025-01-15T10:30:00+09:00"),
+                OptionalUpdated = DateTimeOffset.Parse("2025-01-16T11:45:00-05:00"),
                 Timeout = TimeSpan.FromMinutes(5),
                 Id = Guid.Parse("a1b2c3d4-e5f6-7890-abcd-ef1234567890"),
                 Price = 99.99m
@@ -587,6 +595,8 @@ namespace IniSharp.Tests.Serialization
 
             // Assert
             Assert.That(doc.DefaultSection.HasProperty("CreatedAt"), Is.True);
+            Assert.That(doc.DefaultSection.HasProperty("LastUpdated"), Is.True);
+            Assert.That(doc.DefaultSection.HasProperty("OptionalUpdated"), Is.True);
             Assert.That(doc.DefaultSection.HasProperty("Timeout"), Is.True);
             Assert.That(doc.DefaultSection.HasProperty("Id"), Is.True);
             Assert.That(doc.DefaultSection.HasProperty("Price"), Is.True);
@@ -743,6 +753,8 @@ namespace IniSharp.Tests.Serialization
             var original = new ConfigWithDateTime
             {
                 CreatedAt = new DateTime(2025, 6, 15, 14, 30, 0),
+                LastUpdated = DateTimeOffset.Parse("2025-06-15T14:30:00+09:00"),
+                OptionalUpdated = DateTimeOffset.Parse("2025-06-16T12:00:00-05:00"),
                 Timeout = TimeSpan.FromHours(2),
                 Id = Guid.NewGuid(),
                 Price = 1234.56m
@@ -754,6 +766,8 @@ namespace IniSharp.Tests.Serialization
 
             // Assert
             Assert.That(restored.CreatedAt, Is.EqualTo(original.CreatedAt));
+            Assert.That(restored.LastUpdated, Is.EqualTo(original.LastUpdated));
+            Assert.That(restored.OptionalUpdated, Is.EqualTo(original.OptionalUpdated));
             Assert.That(restored.Timeout, Is.EqualTo(original.Timeout));
             Assert.That(restored.Id, Is.EqualTo(original.Id));
             Assert.That(restored.Price, Is.EqualTo(original.Price));

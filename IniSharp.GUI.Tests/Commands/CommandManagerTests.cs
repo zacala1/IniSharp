@@ -332,6 +332,20 @@ namespace IniSharp.GUI.Tests.Commands
         }
 
         [Test]
+        public void MarkSavePoint_AfterUndoThenDifferentCommand_RemainsDirty()
+        {
+            var command1 = new GenericCommand("First", () => { }, () => { });
+            var command2 = new GenericCommand("Second", () => { }, () => { });
+            _manager.ExecuteCommand(command1);
+            _manager.MarkSavePoint();
+            _manager.Undo();
+
+            _manager.ExecuteCommand(command2);
+
+            Assert.That(_manager.IsDirtyFromSavePoint, Is.True);
+        }
+
+        [Test]
         public void MarkSavePoint_RaisesStateChanged()
         {
             bool eventRaised = false;

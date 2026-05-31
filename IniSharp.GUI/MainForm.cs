@@ -21,6 +21,7 @@ namespace IniSharp.GUI
         private Document? _documentConfig;
         private IniConfigOption _configOptions;
         private bool _isDirty = false;
+        private bool _hasDirectDirtyChanges = false;
         private Encoding _currentEncoding = Encoding.UTF8;
 
         // Inline cell editing
@@ -77,6 +78,8 @@ namespace IniSharp.GUI
         // TreeView mode
         private TreeView? _sectionTreeView;
         private TreeViewBuilder? _treeViewBuilder;
+        private string? _selectedSectionName;
+        private bool _isSyncingSectionSelection;
         private ToolStripMenuItem? _treeViewModeMenuItem;
         private ToolStripMenuItem? _autoBackupMenuItem;
         private bool _windowStateRestored = false;
@@ -157,6 +160,7 @@ namespace IniSharp.GUI
             sectionView.SelectedIndexChanged += OnSectionSelectionChanged;
             sectionView.DoubleClick += OnSectionDoubleClick;
             propertyView.MouseDoubleClick += OnPropertyDoubleClick;
+            propertyView.SelectedIndexChanged += OnPropertySelectionChanged;
             propertyView.Click += OnPropertyClick;
             preCommentsTextBox.TextChanged += OnPreCommentsChanged;
             inlineCommentTextBox.TextChanged += OnInlineCommentChanged;
@@ -248,7 +252,15 @@ namespace IniSharp.GUI
             sectionView.EndUpdate();
 
             if (sectionView.Items.Count > 0)
+            {
                 sectionView.SelectedIndex = 0;
+            }
+            else
+            {
+                _selectedSectionName = null;
+                propertyView.Items.Clear();
+                RefreshStatusBar();
+            }
         }
 
         private void SetupPropertyFilter()
@@ -377,7 +389,7 @@ namespace IniSharp.GUI
         /// </summary>
         private void SyncDirtyWithCommandManager()
         {
-            bool shouldBeDirty = _commandManager.IsDirtyFromSavePoint;
+            bool shouldBeDirty = _hasDirectDirtyChanges || _commandManager.IsDirtyFromSavePoint;
             if (_isDirty != shouldBeDirty)
             {
                 _isDirty = shouldBeDirty;
@@ -399,6 +411,11 @@ namespace IniSharp.GUI
 
         private void OnFormKeyDown(object? sender, KeyEventArgs e)
         {
+            if (IsTextInputShortcut(e) && GetFocusedTextBox() != null)
+            {
+                return;
+            }
+
             // Undo: Ctrl+Z
             if (e.Control && e.KeyCode == Keys.Z && !e.Shift)
             {
@@ -433,14 +450,14 @@ namespace IniSharp.GUI
             else if (e.KeyCode == Keys.Delete && !e.Control && !e.Alt)
             {
                 // Only handle if not in a text editing mode
-                if (ActiveControl != preCommentsTextBox && ActiveControl != inlineCommentTextBox)
+                if (GetFocusedTextBox() == null)
                 {
                     if (propertyView.Focused && propertyView.SelectedItems.Count > 0)
                     {
                         DeleteKeyValue(sender, e);
                         e.Handled = true;
                     }
-                    else if (sectionView.Focused && sectionView.SelectedIndex > 0)
+                    else if (sectionView.Focused && GetSelectedNamedSectionIndex() >= 0)
                     {
                         DeleteSection(sender, e);
                         e.Handled = true;
@@ -455,7 +472,7 @@ namespace IniSharp.GUI
                     EditKeyValue(sender, e);
                     e.Handled = true;
                 }
-                else if (sectionView.Focused && sectionView.SelectedIndex > 0)
+                else if (sectionView.Focused && GetSelectedNamedSectionIndex() >= 0)
                 {
                     EditSection(sender, e);
                     e.Handled = true;
@@ -479,6 +496,40 @@ namespace IniSharp.GUI
                 GoToSection();
                 e.Handled = true;
             }
+        }
+
+        private static bool IsTextInputShortcut(KeyEventArgs e)
+        {
+            if (e.Control && !e.Alt)
+            {
+                return e.KeyCode is Keys.A or Keys.C or Keys.V or Keys.X or Keys.Y or Keys.Z;
+            }
+
+            return e.KeyCode is Keys.Delete or Keys.Back;
+        }
+
+        private TextBoxBase? GetFocusedTextBox()
+        {
+            return FindFocusedTextBox(this);
+        }
+
+        private static TextBoxBase? FindFocusedTextBox(Control control)
+        {
+            if (control is TextBoxBase textBox && textBox.Focused)
+            {
+                return textBox;
+            }
+
+            foreach (Control child in control.Controls)
+            {
+                var focused = FindFocusedTextBox(child);
+                if (focused != null)
+                {
+                    return focused;
+                }
+            }
+
+            return null;
         }
 
         private void SetupMenuItems()
@@ -707,6 +758,8 @@ namespace IniSharp.GUI
             if (_documentConfig == null)
                 return;
 
+            var selectedSectionName = _selectedSectionName;
+
             // Build the complete list of section names for filtering
             _allSectionNames.Clear();
             _allSectionNames.Add(GetGlobalSectionName());
@@ -725,6 +778,16 @@ namespace IniSharp.GUI
             foreach (var name in _allSectionNames)
             {
                 sectionView.Items.Add(name);
+            }
+
+            if (!string.IsNullOrEmpty(selectedSectionName))
+            {
+                SelectSectionInList(selectedSectionName);
+            }
+
+            if (_sectionTreeView != null)
+            {
+                RefreshTreeView();
             }
         }
 
@@ -761,6 +824,35 @@ namespace IniSharp.GUI
 
             // Auto-resize columns to fit content
             AutoResizeColumns();
+        }
+
+        private void RefreshKeyValueListAndSelect(string sectionName, params string[] preferredKeys)
+        {
+            RefreshKeyValueList(sectionName);
+            foreach (var key in preferredKeys)
+            {
+                if (SelectPropertyInView(key))
+                    return;
+            }
+        }
+
+        private bool SelectPropertyInView(string key)
+        {
+            if (string.IsNullOrEmpty(key))
+                return false;
+
+            foreach (ListViewItem item in propertyView.Items)
+            {
+                if (item.Text.Equals(key, StringComparison.OrdinalIgnoreCase))
+                {
+                    item.Selected = true;
+                    item.Focused = true;
+                    item.EnsureVisible();
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void AutoResizeColumns()
@@ -1128,10 +1220,11 @@ namespace IniSharp.GUI
                 return;
             if (sectionView.SelectedItem == null)
                 return;
-            if (sectionView.SelectedIndex <= 1)
+
+            var currentIndex = GetSelectedNamedSectionIndex();
+            if (currentIndex <= 0)
                 return;
 
-            int currentIndex = sectionView.SelectedIndex - 1;
             var section = _documentConfig[currentIndex];
             int targetIndex = currentIndex - 1;
 
@@ -1143,7 +1236,7 @@ namespace IniSharp.GUI
                 () =>
                 {
                     RefreshSectionList();
-                    sectionView.SelectedIndex = targetIndex + 1; // +1 for global section
+                    SelectSectionInList(section.Name);
                     RefreshStatusBar();
                 });
             _commandManager.ExecuteCommand(command);
@@ -1156,11 +1249,11 @@ namespace IniSharp.GUI
                 return;
             if (sectionView.SelectedItem == null)
                 return;
-            if (sectionView.SelectedIndex == 0 ||
-                sectionView.SelectedIndex == sectionView.Items.Count - 1)
+
+            var currentIndex = GetSelectedNamedSectionIndex();
+            if (currentIndex < 0 || currentIndex >= _documentConfig.SectionCount - 1)
                 return;
 
-            int currentIndex = sectionView.SelectedIndex - 1;
             var section = _documentConfig[currentIndex];
             int targetIndex = currentIndex + 1;
 
@@ -1172,7 +1265,7 @@ namespace IniSharp.GUI
                 () =>
                 {
                     RefreshSectionList();
-                    sectionView.SelectedIndex = targetIndex + 1; // +1 for global section
+                    SelectSectionInList(section.Name);
                     RefreshStatusBar();
                 });
             _commandManager.ExecuteCommand(command);
@@ -1186,7 +1279,7 @@ namespace IniSharp.GUI
             if (sectionView.SelectedItem == null)
                 return;
 
-            string originalName = sectionView.SelectedItem.ToString() ?? string.Empty;
+            string originalName = GetSelectedSectionName();
             using (var dialog = new InputDialog("Duplicate Section",
                 "Enter new section name:", originalName + "_copy"))
             {
@@ -1237,7 +1330,7 @@ namespace IniSharp.GUI
         {
             if (_documentConfig == null)
                 return;
-            string? selectedSection = sectionView.SelectedItem?.ToString();
+            string? selectedSection = GetSelectedSectionName();
 
             var command = new SortSectionsCommand(
                 _documentConfig,
@@ -1404,11 +1497,12 @@ namespace IniSharp.GUI
         {
             if (propertyView.SelectedItems.Count == 0)
                 return;
-            if (propertyView.SelectedIndices[0] == 0)
+
+            var selectedSection = GetSelectedSection();
+            int currentIndex = GetSelectedPropertyIndex(selectedSection);
+            if (currentIndex <= 0)
                 return;
 
-            int currentIndex = propertyView.SelectedIndices[0];
-            var selectedSection = GetSelectedSection();
             var property = selectedSection[currentIndex];
             int targetIndex = currentIndex - 1;
 
@@ -1419,9 +1513,7 @@ namespace IniSharp.GUI
                 targetIndex,
                 () =>
                 {
-                    RefreshKeyValueList(selectedSection.Name);
-                    if (propertyView.Items.Count > targetIndex)
-                        propertyView.Items[targetIndex].Selected = true;
+                    RefreshKeyValueListAndSelect(selectedSection.Name, property.Name);
                     RefreshStatusBar();
                 });
             _commandManager.ExecuteCommand(command);
@@ -1432,11 +1524,12 @@ namespace IniSharp.GUI
         {
             if (propertyView.SelectedItems.Count == 0)
                 return;
-            if (propertyView.SelectedIndices[0] == propertyView.Items.Count - 1)
+
+            var selectedSection = GetSelectedSection();
+            int currentIndex = GetSelectedPropertyIndex(selectedSection);
+            if (currentIndex < 0 || currentIndex >= selectedSection.PropertyCount - 1)
                 return;
 
-            int currentIndex = propertyView.SelectedIndices[0];
-            var selectedSection = GetSelectedSection();
             var property = selectedSection[currentIndex];
             int targetIndex = currentIndex + 1;
 
@@ -1447,9 +1540,7 @@ namespace IniSharp.GUI
                 targetIndex,
                 () =>
                 {
-                    RefreshKeyValueList(selectedSection.Name);
-                    if (propertyView.Items.Count > targetIndex)
-                        propertyView.Items[targetIndex].Selected = true;
+                    RefreshKeyValueListAndSelect(selectedSection.Name, property.Name);
                     RefreshStatusBar();
                 });
             _commandManager.ExecuteCommand(command);
@@ -1566,6 +1657,12 @@ namespace IniSharp.GUI
             if (sectionView.SelectedItem == null || _documentConfig == null)
                 return;
 
+            _selectedSectionName = sectionView.SelectedItem.ToString();
+            if (!_isSyncingSectionSelection && !string.IsNullOrEmpty(_selectedSectionName))
+            {
+                SelectSectionInTree(_selectedSectionName);
+            }
+
             // Clear property filter when changing sections
             if (_propertyFilterBox != null && !string.IsNullOrEmpty(_propertyFilterBox.Text))
             {
@@ -1603,8 +1700,7 @@ namespace IniSharp.GUI
 
         private void OnSectionDoubleClick(object? sender, EventArgs e)
         {
-            // Allow editing non-default sections (index > 0)
-            if (sectionView.SelectedIndex > 0)
+            if (GetSelectedNamedSectionIndex() >= 0)
             {
                 EditSection(sender, e);
             }
@@ -1617,16 +1713,21 @@ namespace IniSharp.GUI
 
         private void OnPropertyClick(object? sender, EventArgs e)
         {
+            OnPropertySelectionChanged(sender, e);
+        }
+
+        private void OnPropertySelectionChanged(object? sender, EventArgs e)
+        {
             if (propertyView.SelectedItems.Count > 0 && sectionView.SelectedItem != null && _documentConfig != null)
             {
-                ListViewHitTestInfo hitTest = propertyView.HitTest(propertyView.PointToClient(Cursor.Position));
                 try
                 {
                     _isUpdatingCommentsFromCode = true;
 
-                    if (hitTest.Item != null)
+                    var selectedItem = propertyView.SelectedItems[0];
+                    if (selectedItem != null)
                     {
-                        string key = hitTest.Item.SubItems[0].Text;
+                        string key = selectedItem.SubItems[0].Text;
                         var selectedSection = GetSelectedSection();
                         if (selectedSection.TryGetProperty(key, out var property) && property != null)
                         {
@@ -1671,7 +1772,7 @@ namespace IniSharp.GUI
                 index,
                 () =>
                 {
-                    listItem.SubItems[0].Text = newKey;
+                    RefreshKeyValueListAndSelect(selectedSection.Name, newKey, oldKey);
                     RefreshStatusBar();
                 });
             _commandManager.ExecuteCommand(command);
@@ -1706,7 +1807,7 @@ namespace IniSharp.GUI
                 index,
                 () =>
                 {
-                    listItem.SubItems[1].Text = newValue;
+                    RefreshKeyValueListAndSelect(selectedSection.Name, key);
                     RefreshStatusBar();
                 });
             _commandManager.ExecuteCommand(command);
@@ -1731,31 +1832,32 @@ namespace IniSharp.GUI
 
             if (propertyView.SelectedItems.Count > 0)
             {
-                ListViewHitTestInfo hitTest = propertyView.HitTest(propertyView.PointToClient(Cursor.Position));
-                if (hitTest.Item != null)
-                {
-                    string key = hitTest.Item.SubItems[0].Text;
-                    var selectedSection = GetSelectedSection();
-                    var property = selectedSection[key];
+                string key = propertyView.SelectedItems[0].SubItems[0].Text;
+                var selectedSection = GetSelectedSection();
+                var property = selectedSection.GetProperty(key);
+                if (property == null)
+                    return;
 
-                    try
-                    {
-                        property.PreComments.TrySetMultiLineText(preCommentsTextBox.Text);
-                        SetDirty();
-                    }
-                    catch (InvalidOperationException ex)
-                    {
-                        MessageBox.Show(ex.Message, "Invalid Comment",
-                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        preCommentsTextBox.Focus();
-                        return;
-                    }
+                if (!property.PreComments.TrySetMultiLineText(preCommentsTextBox.Text))
+                {
+                    MessageBox.Show("Comment value cannot contain invalid newline characters.", "Invalid Comment",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    preCommentsTextBox.Focus();
+                    return;
                 }
+                SetDirty(directChange: true);
             }
             else if (sectionView.SelectedItem != null)
             {
                 var selectedSection = GetSelectedSection();
-                selectedSection.PreComments.TrySetMultiLineText(preCommentsTextBox.Text);
+                if (!selectedSection.PreComments.TrySetMultiLineText(preCommentsTextBox.Text))
+                {
+                    MessageBox.Show("Comment value cannot contain invalid newline characters.", "Invalid Comment",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    preCommentsTextBox.Focus();
+                    return;
+                }
+                SetDirty(directChange: true);
             }
         }
 
@@ -1766,28 +1868,29 @@ namespace IniSharp.GUI
 
             if (propertyView.SelectedItems.Count > 0)
             {
-                ListViewHitTestInfo hitTest = propertyView.HitTest(propertyView.PointToClient(Cursor.Position));
-                if (hitTest.Item != null)
-                {
-                    string key = hitTest.Item.SubItems[0].Text;
-                    var selectedSection = GetSelectedSection();
-                    var property = selectedSection[key];
+                string key = propertyView.SelectedItems[0].SubItems[0].Text;
+                var selectedSection = GetSelectedSection();
+                var property = selectedSection.GetProperty(key);
+                if (property == null)
+                    return;
 
-                    try
-                    {
-                        ValidateValueComment(inlineCommentTextBox.Text);
-                        property.Comment = string.IsNullOrEmpty(inlineCommentTextBox.Text)
-                            ? null
-                            : new Comment(inlineCommentTextBox.Text);
-                        SetDirty();
-                    }
-                    catch (InvalidOperationException ex)
-                    {
-                        MessageBox.Show(ex.Message, "Invalid Comment",
-                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                        inlineCommentTextBox.Focus();
-                        return;
-                    }
+                try
+                {
+                    ValidateValueComment(inlineCommentTextBox.Text);
+                    var commentPrefix = property.Comment?.Prefix
+                        ?? _documentConfig?.DefaultCommentPrefixChar.ToString()
+                        ?? IniConfigOption.DefaultCommentPrefix.ToString();
+                    property.Comment = string.IsNullOrEmpty(inlineCommentTextBox.Text)
+                        ? null
+                        : new Comment(commentPrefix, inlineCommentTextBox.Text);
+                    SetDirty(directChange: true);
+                }
+                catch (InvalidOperationException ex)
+                {
+                    MessageBox.Show(ex.Message, "Invalid Comment",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    inlineCommentTextBox.Focus();
+                    return;
                 }
             }
             else if (sectionView.SelectedItem != null)
@@ -1796,10 +1899,13 @@ namespace IniSharp.GUI
                 try
                 {
                     ValidateValueComment(inlineCommentTextBox.Text);
+                    var commentPrefix = selectedSection.Comment?.Prefix
+                        ?? _documentConfig?.DefaultCommentPrefixChar.ToString()
+                        ?? IniConfigOption.DefaultCommentPrefix.ToString();
                     selectedSection.Comment = string.IsNullOrEmpty(inlineCommentTextBox.Text)
                         ? null
-                        : new Comment(inlineCommentTextBox.Text);
-                    SetDirty();
+                        : new Comment(commentPrefix, inlineCommentTextBox.Text);
+                    SetDirty(directChange: true);
                 }
                 catch (InvalidOperationException ex)
                 {
@@ -1817,6 +1923,7 @@ namespace IniSharp.GUI
 
             _currentFilePath = "";
             _documentConfig = new();
+            _selectedSectionName = null;
             _commandManager.Clear(); // Clear undo/redo history
 
             RefreshSectionList();
@@ -1846,17 +1953,18 @@ namespace IniSharp.GUI
 
         private void LoadIniFile(string filename)
         {
-            _currentFilePath = filename;
-            sectionView.Items.Clear();
-
             try
             {
                 // Detect file encoding
-                _currentEncoding = EncodingHelper.DetectEncoding(filename);
+                var detectedEncoding = EncodingHelper.DetectEncoding(filename);
 
                 // Load with current options and detected encoding
-                _documentConfig = IniConfigManager.Load(filename, _currentEncoding, _configOptions);
+                var loadedDocument = IniConfigManager.Load(filename, detectedEncoding, _configOptions);
 
+                _currentFilePath = filename;
+                _currentEncoding = detectedEncoding;
+                _documentConfig = loadedDocument;
+                _selectedSectionName = null;
                 RefreshSectionList();
 
                 if (sectionView.Items.Count > 0)
@@ -1914,7 +2022,7 @@ namespace IniSharp.GUI
                 return;
             }
 
-            if (_commandManager.IsDirtyFromSavePoint)
+            if (_isDirty)
             {
                 var result = MessageBox.Show(
                     "You have unsaved changes. Reloading will discard all changes.\n\nDo you want to continue?",
@@ -1945,7 +2053,7 @@ namespace IniSharp.GUI
 
             try
             {
-                IniConfigManager.Save(_currentFilePath, _documentConfig);
+                IniConfigManager.Save(_currentFilePath, _currentEncoding, _documentConfig);
                 _commandManager.MarkSavePoint();
                 SetDirty(false);
                 MessageBox.Show("File saved successfully!", "Save",
@@ -1981,8 +2089,9 @@ namespace IniSharp.GUI
 
             try
             {
-                _currentFilePath = saveFileDialog.FileName;
-                IniConfigManager.Save(_currentFilePath, _documentConfig);
+                var selectedFilePath = saveFileDialog.FileName;
+                IniConfigManager.Save(selectedFilePath, _currentEncoding, _documentConfig);
+                _currentFilePath = selectedFilePath;
                 _commandManager.MarkSavePoint();
                 SetDirty(false);
                 RefreshStatusBar();
@@ -2198,7 +2307,7 @@ namespace IniSharp.GUI
         #region Get Section
         private string GetSelectedSectionName()
         {
-            return sectionView.SelectedItem?.ToString() ?? string.Empty;
+            return sectionView.SelectedItem?.ToString() ?? _selectedSectionName ?? string.Empty;
         }
 
         private string GetGlobalSectionName()
@@ -2210,6 +2319,44 @@ namespace IniSharp.GUI
         {
             var sectionName = GetSelectedSectionName();
             return GetSection(sectionName);
+        }
+
+        private int GetSelectedNamedSectionIndex()
+        {
+            if (_documentConfig == null)
+                return -1;
+
+            var sectionName = GetSelectedSectionName();
+            if (string.IsNullOrEmpty(sectionName) || sectionName == GetGlobalSectionName())
+                return -1;
+
+            return GetSectionIndex(sectionName);
+        }
+
+        private bool IsSectionFilterActive()
+        {
+            return _sectionFilterBox != null && !string.IsNullOrWhiteSpace(_sectionFilterBox.Text);
+        }
+
+        private bool IsPropertyFilterActive()
+        {
+            return _propertyFilterBox != null && !string.IsNullOrWhiteSpace(_propertyFilterBox.Text);
+        }
+
+        private int GetSelectedPropertyIndex(Section section)
+        {
+            if (propertyView.SelectedItems.Count == 0)
+                return -1;
+
+            return GetPropertyIndex(section, propertyView.SelectedItems[0].Text);
+        }
+
+        private int GetPropertyIndexFromListItem(Section section, ListViewItem? item)
+        {
+            if (item == null)
+                return -1;
+
+            return GetPropertyIndex(section, item.Text);
         }
 
         private Section GetSection(string sectionName)
@@ -2228,8 +2375,13 @@ namespace IniSharp.GUI
         #endregion
 
         #region Dirty Flag Management
-        private void SetDirty(bool dirty = true)
+        private void SetDirty(bool dirty = true, bool directChange = false)
         {
+            if (!dirty)
+                _hasDirectDirtyChanges = false;
+            else if (directChange)
+                _hasDirectDirtyChanges = true;
+
             _isDirty = dirty;
             _statisticsDirty = true; // Mark statistics as needing recalculation
             UpdateTitle();
@@ -2654,6 +2806,11 @@ namespace IniSharp.GUI
             {
                 node.Expand();
             }
+
+            if (!string.IsNullOrEmpty(_selectedSectionName))
+            {
+                SelectSectionInTree(_selectedSectionName);
+            }
         }
 
         private TreeNode ConvertToTreeNode(TreeNodeData nodeData)
@@ -2671,6 +2828,75 @@ namespace IniSharp.GUI
             return treeNode;
         }
 
+        private void SelectSectionInList(string sectionName)
+        {
+            if (string.IsNullOrEmpty(sectionName))
+                return;
+
+            for (int i = 0; i < sectionView.Items.Count; i++)
+            {
+                if (sectionView.Items[i]?.ToString()?.Equals(sectionName, StringComparison.OrdinalIgnoreCase) == true)
+                {
+                    _isSyncingSectionSelection = true;
+                    try
+                    {
+                        sectionView.SelectedIndex = i;
+                    }
+                    finally
+                    {
+                        _isSyncingSectionSelection = false;
+                    }
+                    return;
+                }
+            }
+        }
+
+        private void SelectSectionInTree(string sectionName)
+        {
+            if (_sectionTreeView == null || string.IsNullOrEmpty(sectionName))
+                return;
+
+            var node = FindTreeNodeBySectionName(_sectionTreeView.Nodes, sectionName);
+            if (node == null || _sectionTreeView.SelectedNode == node)
+                return;
+
+            _isSyncingSectionSelection = true;
+            try
+            {
+                _sectionTreeView.SelectedNode = node;
+                node.EnsureVisible();
+            }
+            finally
+            {
+                _isSyncingSectionSelection = false;
+            }
+        }
+
+        private TreeNode? FindTreeNodeBySectionName(TreeNodeCollection nodes, string sectionName)
+        {
+            foreach (TreeNode node in nodes)
+            {
+                if (node.Tag is Section section &&
+                    section.Name.Equals(sectionName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return node;
+                }
+
+                if (node.Tag == null &&
+                    node.Text.Equals(GetGlobalSectionName(), StringComparison.OrdinalIgnoreCase) &&
+                    sectionName.Equals(GetGlobalSectionName(), StringComparison.OrdinalIgnoreCase))
+                {
+                    return node;
+                }
+
+                var child = FindTreeNodeBySectionName(node.Nodes, sectionName);
+                if (child != null)
+                    return child;
+            }
+
+            return null;
+        }
+
         private void OnTreeViewSectionSelected(object? sender, TreeViewEventArgs e)
         {
             if (e.Node == null)
@@ -2683,6 +2909,11 @@ namespace IniSharp.GUI
                 // If node has a Tag, it's a section; otherwise it's just a folder
                 if (e.Node.Tag is Section section)
                 {
+                    _selectedSectionName = section.Name;
+                    if (!_isSyncingSectionSelection)
+                    {
+                        SelectSectionInList(section.Name);
+                    }
                     RefreshKeyValueList(section.Name);
                     preCommentsTextBox.Text = section.PreComments.ToMultiLineText();
                     inlineCommentTextBox.Text = section.Comment?.Value ?? "";
@@ -2692,6 +2923,11 @@ namespace IniSharp.GUI
                 else if (e.Node.Tag == null && e.Node.Text == GetGlobalSectionName())
                 {
                     // Global section
+                    _selectedSectionName = GetGlobalSectionName();
+                    if (!_isSyncingSectionSelection)
+                    {
+                        SelectSectionInList(_selectedSectionName);
+                    }
                     RefreshKeyValueList(GetGlobalSectionName());
                     preCommentsTextBox.Text = "";
                     inlineCommentTextBox.Text = "";
@@ -2701,6 +2937,11 @@ namespace IniSharp.GUI
                 else
                 {
                     // Just a folder node, clear properties
+                    _selectedSectionName = null;
+                    if (!_isSyncingSectionSelection)
+                    {
+                        sectionView.ClearSelected();
+                    }
                     propertyView.Items.Clear();
                     preCommentsTextBox.Text = "";
                     inlineCommentTextBox.Text = "";
@@ -2798,7 +3039,12 @@ namespace IniSharp.GUI
                         _documentConfig,
                         sectionName,
                         newName,
-                        () => { RefreshTreeView(); RefreshStatusBar(); });
+                        () =>
+                        {
+                            _selectedSectionName = newName;
+                            RefreshSectionList();
+                            RefreshStatusBar();
+                        });
                     _commandManager.ExecuteCommand(command);
                     SetDirty();
                 }
@@ -2826,7 +3072,8 @@ namespace IniSharp.GUI
                     sectionIndex,
                     () =>
                     {
-                        RefreshTreeView();
+                        _selectedSectionName = GetGlobalSectionName();
+                        RefreshSectionList();
                         RefreshStatusBar();
                     });
                 _commandManager.ExecuteCommand(command);
@@ -2868,13 +3115,20 @@ namespace IniSharp.GUI
                 AutoCompleteSource = AutoCompleteSource.ListItems
             };
 
-            foreach (var item in sectionView.Items)
+            var sectionNames = _allSectionNames.Count > 0
+                ? _allSectionNames
+                : sectionView.Items.Cast<object>().Select(item => item?.ToString() ?? "").ToList();
+
+            foreach (var item in sectionNames)
             {
-                comboBox.Items.Add(item?.ToString() ?? "");
+                comboBox.Items.Add(item);
             }
 
-            if (sectionView.SelectedIndex >= 0)
-                comboBox.SelectedIndex = sectionView.SelectedIndex;
+            var selectedSectionName = GetSelectedSectionName();
+            var selectedComboIndex = sectionNames.FindIndex(
+                item => item.Equals(selectedSectionName, StringComparison.OrdinalIgnoreCase));
+            if (selectedComboIndex >= 0)
+                comboBox.SelectedIndex = selectedComboIndex;
 
             var okButton = new Button
             {
@@ -2898,12 +3152,17 @@ namespace IniSharp.GUI
 
             if (dialog.ShowDialog(this) == DialogResult.OK && comboBox.SelectedIndex >= 0)
             {
-                sectionView.SelectedIndex = comboBox.SelectedIndex;
+                if (_sectionFilterBox != null && !string.IsNullOrEmpty(_sectionFilterBox.Text))
+                    _sectionFilterBox.Text = "";
+                SelectSectionInList(comboBox.Items[comboBox.SelectedIndex]?.ToString() ?? string.Empty);
                 sectionView.Focus();
             }
             else if (dialog.DialogResult == DialogResult.OK && !string.IsNullOrEmpty(comboBox.Text))
             {
                 // Try to find section by name
+                if (_sectionFilterBox != null && !string.IsNullOrEmpty(_sectionFilterBox.Text))
+                    _sectionFilterBox.Text = "";
+
                 for (int i = 0; i < sectionView.Items.Count; i++)
                 {
                     if (sectionView.Items[i].ToString()?.Equals(comboBox.Text, StringComparison.OrdinalIgnoreCase) == true)
@@ -3012,8 +3271,7 @@ namespace IniSharp.GUI
                     if (found)
                     {
                         sectionView.SelectedIndex = i;
-                        propertyView.Items[j].Selected = true;
-                        propertyView.Items[j].EnsureVisible();
+                        RefreshKeyValueListAndSelect(sectionName, prop.Name);
                         _lastSearchSectionIndex = i;
                         _lastSearchPropertyIndex = j;
                         _findReplaceDialog.SetStatus($"Found in {location}: {prop.Name}");
@@ -3092,66 +3350,113 @@ namespace IniSharp.GUI
             bool matchCase = _findReplaceDialog.MatchCase;
             bool useRegex = _findReplaceDialog.UseRegex;
             int replaceCount = 0;
-            bool anyModified = false; // Track if any modification occurred
+            var replacements = new List<(Section Section, int Index, Property OldProperty, Property NewProperty)>();
+            var sectionNames = _allSectionNames.Count > 0
+                ? _allSectionNames
+                : sectionView.Items.Cast<object>().Select(item => item?.ToString() ?? "");
 
             // Replace in all sections and properties
-            foreach (ListViewItem sectionItem in sectionView.Items)
+            foreach (var sectionName in sectionNames)
             {
-                string sectionName = sectionItem.ToString() ?? "";
+                if (string.IsNullOrEmpty(sectionName))
+                    continue;
+
                 var section = GetSection(sectionName);
+                var projectedKeys = new HashSet<string>(
+                    section.Select(property => property.Name),
+                    StringComparer.OrdinalIgnoreCase);
 
                 for (int i = section.PropertyCount - 1; i >= 0; i--)
                 {
                     var prop = section[i];
-                    bool modified = false;
+                    var newKey = prop.Name;
+                    var newValue = prop.Value;
+                    var occurrences = 0;
 
                     if (_findReplaceDialog.SearchKeys)
                     {
-                        string newKey = ReplaceString(prop.Name, findText, replaceText, matchCase, useRegex);
-                        if (newKey != prop.Name && !section.HasProperty(newKey))
+                        var replacedKey = ReplaceString(prop.Name, findText, replaceText, matchCase, useRegex);
+                        if (replacedKey != prop.Name &&
+                            !projectedKeys.Contains(replacedKey))
                         {
-                            var newProp = new Property(newKey, prop.Value);
-                            newProp.PreComments.AddRange(prop.PreComments);
-                            newProp.Comment = prop.Comment;
-                            newProp.IsQuoted = prop.IsQuoted;
-                            section.RemoveProperty(i);
-                            section.InsertProperty(i, newProp);
-                            modified = true;
-                            replaceCount++;
+                            projectedKeys.Remove(prop.Name);
+                            projectedKeys.Add(replacedKey);
+                            newKey = replacedKey;
+                            occurrences++;
                         }
                     }
 
                     if (_findReplaceDialog.SearchValues)
                     {
-                        string newValue = ReplaceString(prop.Value, findText, replaceText, matchCase, useRegex);
-                        if (newValue != prop.Value)
+                        var replacedValue = ReplaceString(prop.Value, findText, replaceText, matchCase, useRegex);
+                        if (replacedValue != prop.Value)
                         {
-                            prop.Value = newValue;
-                            modified = true;
-                            replaceCount++;
+                            newValue = replacedValue;
+                            occurrences++;
                         }
                     }
 
-                    if (modified)
+                    if (occurrences > 0)
                     {
-                        anyModified = true; // Mark that we had modifications
+                        var oldProperty = prop.Clone();
+                        var newProperty = new Property(newKey, newValue)
+                        {
+                            Comment = prop.Comment?.Clone(),
+                            IsQuoted = prop.IsQuoted
+                        };
+                        foreach (var comment in prop.PreComments)
+                        {
+                            newProperty.PreComments.Add(comment.Clone());
+                        }
+
+                        replacements.Add((section, i, oldProperty, newProperty));
+                        replaceCount += occurrences;
                     }
                 }
             }
 
             // Batch UI updates: only update once after all replacements
-            if (anyModified)
+            if (replacements.Count > 0)
             {
+                var selectedSectionName = GetSelectedSectionName();
+                var command = new GenericCommand(
+                    $"Replace All ({replaceCount} occurrence(s))",
+                    () =>
+                    {
+                        foreach (var replacement in replacements.OrderByDescending(item => item.Index))
+                        {
+                            replacement.Section.RemoveProperty(replacement.OldProperty.Name);
+                            InsertOrAppendProperty(replacement.Section, replacement.Index, replacement.NewProperty.Clone());
+                        }
+                        RefreshKeyValueList(selectedSectionName);
+                        RefreshStatusBar();
+                    },
+                    () =>
+                    {
+                        foreach (var replacement in replacements.OrderBy(item => item.Index))
+                        {
+                            replacement.Section.RemoveProperty(replacement.NewProperty.Name);
+                            InsertOrAppendProperty(replacement.Section, replacement.Index, replacement.OldProperty.Clone());
+                        }
+                        RefreshKeyValueList(selectedSectionName);
+                        RefreshStatusBar();
+                    });
+
+                _commandManager.ExecuteCommand(command);
                 SetDirty();
-                if (sectionView.SelectedItem != null)
-                {
-                    RefreshKeyValueList(GetSelectedSectionName());
-                }
             }
 
             _findReplaceDialog.SetStatus($"Replaced {replaceCount} occurrence(s).");
             _lastSearchSectionIndex = -1;
             _lastSearchPropertyIndex = -1;
+        }
+
+        private static void InsertOrAppendProperty(Section section, int index, Property property)
+        {
+            if (index >= 0 && index <= section.PropertyCount)
+                section.InsertProperty(index, property);
+            else
+                section.AddProperty(property);
         }
 
         private string ReplaceString(string input, string find, string replace, bool matchCase, bool useRegex)
@@ -3192,19 +3497,28 @@ namespace IniSharp.GUI
 
         private void Undo(object? sender, EventArgs e)
         {
+            var focusedTextBox = GetFocusedTextBox();
+            if (focusedTextBox != null)
+            {
+                if (focusedTextBox.CanUndo)
+                    focusedTextBox.Undo();
+                return;
+            }
+
             if (_commandManager.CanUndo)
             {
                 _commandManager.Undo();
-                SetDirty();
             }
         }
 
         private void Redo(object? sender, EventArgs e)
         {
+            if (GetFocusedTextBox() != null)
+                return;
+
             if (_commandManager.CanRedo)
             {
                 _commandManager.Redo();
-                SetDirty();
             }
         }
 
@@ -3231,12 +3545,25 @@ namespace IniSharp.GUI
 
         #region Copy/Paste/Cut
 
+        private bool TryHandleFocusedTextBoxClipboard(Action<TextBoxBase> operation)
+        {
+            var focusedTextBox = GetFocusedTextBox();
+            if (focusedTextBox == null)
+                return false;
+
+            operation(focusedTextBox);
+            return true;
+        }
+
         private void Copy(object? sender, EventArgs e)
         {
+            if (TryHandleFocusedTextBoxClipboard(textBox => textBox.Copy()))
+                return;
+
             // Check if properties are selected (prioritize property selection)
             if (propertyView.SelectedItems.Count > 0 && sectionView.SelectedIndex >= 0)
             {
-                string sectionName = sectionView.SelectedItem?.ToString() ?? "";
+                string sectionName = GetSelectedSectionName();
                 var section = GetSection(sectionName);
 
                 if (propertyView.SelectedItems.Count == 1)
@@ -3269,7 +3596,7 @@ namespace IniSharp.GUI
             // Check if a section is selected (no properties selected)
             if (sectionView.SelectedIndex >= 0)
             {
-                string sectionName = sectionView.SelectedItem?.ToString() ?? "";
+                string sectionName = GetSelectedSectionName();
                 var section = GetSection(sectionName);
                 ClipboardHelper.CopySection(section);
             }
@@ -3277,6 +3604,15 @@ namespace IniSharp.GUI
 
         private void Cut(object? sender, EventArgs e)
         {
+            if (TryHandleFocusedTextBoxClipboard(textBox =>
+            {
+                if (!textBox.ReadOnly)
+                    textBox.Cut();
+            }))
+            {
+                return;
+            }
+
             // Copy first
             Copy(sender, e);
 
@@ -3285,7 +3621,7 @@ namespace IniSharp.GUI
             {
                 DeleteKeyValue(sender, e);
             }
-            else if (sectionView.SelectedIndex > 0) // Don't allow cutting global section
+            else if (GetSelectedNamedSectionIndex() >= 0)
             {
                 DeleteSection(sender, e);
             }
@@ -3293,6 +3629,15 @@ namespace IniSharp.GUI
 
         private void Paste(object? sender, EventArgs e)
         {
+            if (TryHandleFocusedTextBoxClipboard(textBox =>
+            {
+                if (!textBox.ReadOnly)
+                    textBox.Paste();
+            }))
+            {
+                return;
+            }
+
             if (_documentConfig == null)
                 return;
 
@@ -3316,7 +3661,8 @@ namespace IniSharp.GUI
                     newSection.PreComments.AddRange(section.PreComments);
                     newSection.Comment = section.Comment;
 
-                    int index = sectionView.SelectedIndex >= 0 ? sectionView.SelectedIndex : _documentConfig.SectionCount;
+                    int selectedIndex = GetSelectedNamedSectionIndex();
+                    int index = selectedIndex >= 0 ? selectedIndex + 1 : 0;
                     var command = new AddSectionCommand(_documentConfig, newSection, index, () =>
                     {
                         RefreshSectionList();
@@ -3334,7 +3680,7 @@ namespace IniSharp.GUI
                 var properties = ClipboardHelper.GetProperties();
                 if (properties != null && properties.Count > 0 && sectionView.SelectedIndex >= 0)
                 {
-                    string sectionName = sectionView.SelectedItem?.ToString() ?? "";
+                    string sectionName = GetSelectedSectionName();
                     var section = GetSection(sectionName);
 
                     var newProperties = new List<Property>();
@@ -3360,8 +3706,9 @@ namespace IniSharp.GUI
                         newProperties.Add(newProperty);
                     }
 
-                    int startIndex = propertyView.SelectedItems.Count > 0
-                        ? propertyView.SelectedIndices[0]
+                    int selectedPropertyIndex = GetSelectedPropertyIndex(section);
+                    int startIndex = selectedPropertyIndex >= 0
+                        ? selectedPropertyIndex
                         : section.PropertyCount;
 
                     var command = new GenericCommand(
@@ -3396,7 +3743,7 @@ namespace IniSharp.GUI
                 var property = ClipboardHelper.GetProperty();
                 if (property != null && sectionView.SelectedIndex >= 0)
                 {
-                    string sectionName = sectionView.SelectedItem?.ToString() ?? "";
+                    string sectionName = GetSelectedSectionName();
                     var section = GetSection(sectionName);
 
                     // Generate unique key if needed
@@ -3417,8 +3764,9 @@ namespace IniSharp.GUI
                         newProperty.PreComments.Add(comment);
                     }
 
-                    int index = propertyView.SelectedItems.Count > 0
-                        ? propertyView.SelectedIndices[0]
+                    int selectedPropertyIndex = GetSelectedPropertyIndex(section);
+                    int index = selectedPropertyIndex >= 0
+                        ? selectedPropertyIndex
                         : section.PropertyCount;
 
                     var command = new AddPropertyCommand(section, newProperty, index, () =>
@@ -3527,6 +3875,9 @@ namespace IniSharp.GUI
                 return;
 
             var item = sectionView.Items[_dragSectionIndex];
+            if (item == null || item.ToString() == GetGlobalSectionName())
+                return;
+
             sectionView.DoDragDrop(item, DragDropEffects.Move);
         }
 
@@ -3546,29 +3897,57 @@ namespace IniSharp.GUI
             if (targetIndex < 0)
                 targetIndex = sectionView.Items.Count - 1;
 
-            if (targetIndex == _dragSectionIndex)
-                return;
-
             // Get the section being moved
             var sectionName = sectionView.Items[_dragSectionIndex]?.ToString();
-            if (string.IsNullOrEmpty(sectionName))
+            if (string.IsNullOrEmpty(sectionName) || sectionName == GetGlobalSectionName())
                 return;
 
             var section = _documentConfig.GetSection(sectionName);
             if (section == null)
                 return;
 
+            int oldIndex = GetSectionIndex(sectionName);
+            int newIndex = GetSectionDropTargetIndex(targetIndex);
+            if (oldIndex < 0 || newIndex < 0 || oldIndex == newIndex)
+                return;
+
             // Create command for undo/redo
-            int oldIndex = _dragSectionIndex;
-            int newIndex = targetIndex;
             var command = new GenericCommand(
                 $"Move section '{sectionName}'",
-                () => MoveSectionToIndex(sectionName, newIndex),
-                () => MoveSectionToIndex(sectionName, oldIndex)
+                () =>
+                {
+                    MoveSectionToIndex(sectionName, newIndex);
+                    RefreshStatusBar();
+                },
+                () =>
+                {
+                    MoveSectionToIndex(sectionName, oldIndex);
+                    RefreshStatusBar();
+                }
             );
             _commandManager.ExecuteCommand(command);
+            SetDirty();
 
             _dragSectionIndex = -1;
+        }
+
+        private int GetSectionDropTargetIndex(int viewIndex)
+        {
+            if (_documentConfig == null)
+                return -1;
+
+            if (viewIndex < 0 || viewIndex >= sectionView.Items.Count)
+                return _documentConfig.SectionCount;
+
+            var targetSectionName = sectionView.Items[viewIndex]?.ToString();
+            if (string.IsNullOrEmpty(targetSectionName))
+                return _documentConfig.SectionCount;
+
+            if (targetSectionName == GetGlobalSectionName())
+                return 0;
+
+            var targetIndex = GetSectionIndex(targetSectionName);
+            return targetIndex >= 0 ? targetIndex : _documentConfig.SectionCount;
         }
 
         private void MoveSectionToIndex(string sectionName, int targetIndex)
@@ -3633,32 +4012,49 @@ namespace IniSharp.GUI
 
             var point = propertyView.PointToClient(new Point(e.X, e.Y));
             var targetItem = propertyView.GetItemAt(point.X, point.Y);
-            int targetIndex = targetItem?.Index ?? propertyView.Items.Count - 1;
-
-            if (targetIndex == _dragPropertyIndex)
+            if (targetItem?.Index == _dragPropertyIndex)
                 return;
 
             var section = GetSelectedSection();
             if (section == null)
                 return;
 
-            var properties = section.GetProperties().ToList();
-            if (_dragPropertyIndex >= properties.Count)
+            var sourceItem = propertyView.Items[_dragPropertyIndex];
+            int oldIndex = GetPropertyIndexFromListItem(section, sourceItem);
+            int newIndex = GetPropertyDropTargetIndex(section, targetItem);
+
+            if (oldIndex < 0 || newIndex < 0 || oldIndex == newIndex)
                 return;
 
-            var property = properties[_dragPropertyIndex];
+            var property = section[oldIndex];
 
             // Create command for undo/redo
-            int oldIndex = _dragPropertyIndex;
-            int newIndex = targetIndex;
             var command = new GenericCommand(
                 $"Move property '{property.Name}'",
-                () => MovePropertyToIndex(section.Name, property.Name, newIndex),
-                () => MovePropertyToIndex(section.Name, property.Name, oldIndex)
+                () =>
+                {
+                    MovePropertyToIndex(section.Name, property.Name, newIndex);
+                    RefreshStatusBar();
+                },
+                () =>
+                {
+                    MovePropertyToIndex(section.Name, property.Name, oldIndex);
+                    RefreshStatusBar();
+                }
             );
             _commandManager.ExecuteCommand(command);
+            SetDirty();
 
             _dragPropertyIndex = -1;
+        }
+
+        private int GetPropertyDropTargetIndex(Section section, ListViewItem? targetItem)
+        {
+            if (targetItem == null)
+                return section.PropertyCount;
+
+            var targetIndex = GetPropertyIndexFromListItem(section, targetItem);
+            return targetIndex >= 0 ? targetIndex : section.PropertyCount;
         }
 
         private void MovePropertyToIndex(string sectionName, string propertyName, int targetIndex)
@@ -3666,7 +4062,7 @@ namespace IniSharp.GUI
             if (_documentConfig == null)
                 return;
 
-            var section = sectionName == ""
+            var section = sectionName == GetGlobalSectionName()
                 ? _documentConfig.DefaultSection
                 : _documentConfig.GetSection(sectionName);
 
@@ -3816,12 +4212,16 @@ namespace IniSharp.GUI
             contextMenu.Opening += (s, e) =>
             {
                 bool hasSelection = sectionView.SelectedIndex >= 0;
-                bool isGlobalSection = hasSelection && sectionView.SelectedIndex == 0;
+                string selectedSectionName = hasSelection ? GetSelectedSectionName() : string.Empty;
+                int namedSectionIndex = hasSelection ? GetSelectedNamedSectionIndex() : -1;
+                bool isGlobalSection = hasSelection && selectedSectionName == GetGlobalSectionName();
 
                 editSectionItem.Enabled = hasSelection && !isGlobalSection;
                 duplicateSectionItem.Enabled = hasSelection;
-                moveUpItem.Enabled = hasSelection && sectionView.SelectedIndex > 1; // Can't move global or first section up
-                moveDownItem.Enabled = hasSelection && sectionView.SelectedIndex < sectionView.Items.Count - 1;
+                moveUpItem.Enabled = namedSectionIndex > 0;
+                moveDownItem.Enabled = _documentConfig != null &&
+                    namedSectionIndex >= 0 &&
+                    namedSectionIndex < _documentConfig.SectionCount - 1;
                 sortItem.Enabled = sectionView.Items.Count > 1;
                 sectionStatsItem.Enabled = hasSelection;
                 copyItem.Enabled = hasSelection;
@@ -3904,13 +4304,15 @@ namespace IniSharp.GUI
             {
                 bool hasSectionSelected = sectionView.SelectedIndex >= 0;
                 bool hasPropertySelected = propertyView.SelectedItems.Count > 0;
-                int propertyCount = propertyView.Items.Count;
+                var section = hasSectionSelected ? GetSelectedSection() : null;
+                int propertyIndex = section != null ? GetSelectedPropertyIndex(section) : -1;
+                int propertyCount = section?.PropertyCount ?? 0;
 
                 addKeyValueItem.Enabled = hasSectionSelected;
                 editKeyValueItem.Enabled = hasPropertySelected;
                 duplicateKeyItem.Enabled = hasPropertySelected;
-                moveUpItem.Enabled = hasPropertySelected && propertyView.SelectedIndices[0] > 0;
-                moveDownItem.Enabled = hasPropertySelected && propertyView.SelectedIndices[0] < propertyCount - 1;
+                moveUpItem.Enabled = propertyIndex > 0;
+                moveDownItem.Enabled = propertyIndex >= 0 && propertyIndex < propertyCount - 1;
                 sortItem.Enabled = propertyCount > 1;
                 copyItem.Enabled = hasPropertySelected;
                 pasteItem.Enabled = hasSectionSelected && ClipboardHelper.HasProperty();
@@ -3984,13 +4386,13 @@ namespace IniSharp.GUI
                 var rightTitle = Path.GetFileName(openDialog.FileName);
 
                 using var diffViewer = new DiffViewerForm(_documentConfig, otherDoc, leftTitle, rightTitle);
-                if (diffViewer.ShowDialog(this) == DialogResult.OK && diffViewer.MergeResult != null)
+                diffViewer.ShowDialog(this);
+                if (diffViewer.MergeResult != null)
                 {
                     // Changes were merged
                     if (diffViewer.MergeResult.TotalChanges > 0)
                     {
-                        _isDirty = true;
-                        UpdateTitle();
+                        SetDirty(directChange: true);
                         RefreshSectionList();
                         if (sectionView.Items.Count > 0)
                         {
@@ -4008,7 +4410,7 @@ namespace IniSharp.GUI
 
         private void ShowSectionStatistics(object? sender, EventArgs e)
         {
-            if (_documentConfig == null || sectionView.SelectedIndex < 0)
+            if (_documentConfig == null || string.IsNullOrEmpty(GetSelectedSectionName()))
             {
                 MessageBox.Show("Please select a section first.", "Section Statistics",
                     MessageBoxButtons.OK, MessageBoxIcon.Information);

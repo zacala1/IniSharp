@@ -51,6 +51,23 @@ namespace IniSharp.Tests.Parsing
             Assert.That(result, Does.Contain("Key: Value"));
         }
 
+        [Test]
+        public void SaveAndLoad_WithColonSeparator_RoundTripsProperty()
+        {
+            // Arrange
+            var doc = new Document();
+            doc["Section"].AddProperty("Key", "Value");
+            var options = new SaveOptions { KeyValueSeparator = ": " };
+
+            // Act
+            var result = SaveToString(doc, options);
+            using var stream = new MemoryStream(Encoding.UTF8.GetBytes(result));
+            var loaded = IniConfigManager.Load(stream, Encoding.UTF8);
+
+            // Assert
+            Assert.That(loaded["Section"]["Key"].Value, Is.EqualTo("Value"));
+        }
+
         #endregion
 
         #region BlankLinesBetweenSections Tests

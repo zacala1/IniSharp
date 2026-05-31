@@ -211,13 +211,14 @@ namespace IniSharp
                     var commentSign = span.IndexOfAny(doc.CommentPrefixChars);
                     if (commentSign == 0)
                     {
+                        var commentPrefix = span[commentSign].ToString();
                         var commentString = span.Slice(1).ToString();
                         // Enforce MaxPendingComments limit (FIFO - remove oldest when full)
                         if (option.MaxPendingComments > 0 && pendingComments.Count >= option.MaxPendingComments)
                         {
                             pendingComments.Dequeue();
                         }
-                        pendingComments.Enqueue(new Comment(commentString));
+                        pendingComments.Enqueue(new Comment(commentPrefix, commentString));
                         continue;
                     }
 
@@ -238,30 +239,29 @@ namespace IniSharp
                             continue;
                         }
 
+                        Section parsedSection;
                         try
                         {
-                            currentSection = new Section(sectionName);
+                            parsedSection = new Section(sectionName);
                         }
                         catch (ArgumentException ex)
                         {
-                            var error = new ParsingErrorEventArgs(lineNumber, line, $"Invalid section name: {ex.Message}");
-                            if (option.CollectParsingErrors)
-                                doc.AddParsingError(error);
+                            ReportError(doc, option, lineNumber, line, $"Invalid section name: {ex.Message}");
                             continue;
-                        }
-
-                        if (pendingComments.Count > 0)
-                        {
-                            currentSection.PreComments.AddRange(pendingComments);
-                            pendingComments.Clear();
                         }
 
                         var afterSection = span.Slice(closeBracket + 1).TrimStart();
                         commentSign = afterSection.IndexOfAny(doc.CommentPrefixChars);
                         if (commentSign == 0)
                         {
+                            var commentPrefix = afterSection[commentSign].ToString();
                             var commentString = afterSection.Slice(1).ToString();
-                            currentSection.Comment = new Comment(commentString);
+                            parsedSection.Comment = new Comment(commentPrefix, commentString);
+                        }
+                        else if (!afterSection.IsEmpty)
+                        {
+                            ReportError(doc, option, lineNumber, line, "Invalid content after section declaration");
+                            continue;
                         }
 
                         // Check section limit
@@ -271,11 +271,20 @@ namespace IniSharp
                             continue;
                         }
 
+                        if (pendingComments.Count > 0)
+                        {
+                            parsedSection.PreComments.AddRange(pendingComments);
+                            pendingComments.Clear();
+                        }
+
+                        currentSection = parsedSection;
                         doc.AddSectionInternal(currentSection);
                         continue;
                     }
 
                     var equalSign = span.IndexOf('=');
+                    if (equalSign == -1)
+                        equalSign = span.IndexOf(':');
                     if (equalSign == -1)
                     {
                         ReportError(doc, option, lineNumber, line, "Missing equals sign in key-value pair");
@@ -292,6 +301,7 @@ namespace IniSharp
                     var valueStart = span.Slice(equalSign + 1).TrimStart();
                     bool isQuoted = false;
                     string value, comment = string.Empty;
+                    string propertyCommentPrefix = doc.DefaultCommentPrefixChar.ToString();
 
                     if (valueStart.IsEmpty)
                     {
@@ -362,8 +372,10 @@ namespace IniSharp
                         commentSign = remains.IndexOfAny(doc.CommentPrefixChars);
                         if (commentSign == 0)
                         {
+                            var commentPrefix = remains[commentSign].ToString();
                             remains = remains.Slice(1);
                             comment = remains.ToString();
+                            propertyCommentPrefix = commentPrefix;
                             remains = [];
                         }
                         else if (commentSign > 0)
@@ -385,6 +397,7 @@ namespace IniSharp
                         commentSign = valueStart.IndexOfAny(doc.CommentPrefixChars);
                         if (commentSign >= 0)
                         {
+                            propertyCommentPrefix = valueStart[commentSign].ToString();
                             value = valueStart.Slice(0, commentSign).TrimEnd().ToString();
                             comment = valueStart.Slice(commentSign + 1).ToString();
                         }
@@ -420,7 +433,7 @@ namespace IniSharp
 
                     if (!string.IsNullOrEmpty(comment))
                     {
-                        property.Comment = new Comment(comment);
+                        property.Comment = new Comment(propertyCommentPrefix, comment);
                     }
 
                     currentSection.AddPropertyInternal(property);
