@@ -109,6 +109,31 @@ var options = new LoadOptions
 var doc = await IniConfigManager.LoadWithOptionsAsync("config.ini", options);
 ```
 
+## SaveOptions
+
+저장 형식을 제어할 때 사용합니다.
+
+```csharp
+var saveOptions = new SaveOptions
+{
+    KeyValueSeparator = ": ",
+    BlankLinesBetweenSections = 2,
+    BlankLineAfterDefaultSection = true,
+    NormalizeCommentPrefix = false,
+    SpaceBeforeInlineComment = true
+};
+
+IniConfigManager.Save("config.ini", Encoding.UTF8, doc, saveOptions);
+await IniConfigManager.SaveAsync("config.ini", Encoding.UTF8, doc, saveOptions);
+```
+
+`SaveOptions.Default`는 불변입니다. 기본값을 바탕으로 일부만 바꾸려면 다음처럼 복사해서 사용합니다.
+
+```csharp
+var options = SaveOptions.Default.Clone();
+options.KeyValueSeparator = "=";
+```
+
 ## 보안 제한
 
 신뢰할 수 없는 INI 파일을 파싱할 때 메모리 소진 공격을 방지합니다.
@@ -127,6 +152,12 @@ var options = new IniConfigOption
 
     // 한 줄의 최대 길이 (0 = 무제한)
     MaxLineLength = 8192,
+
+    // 수집할 최대 파싱 에러 수 (0 = 무제한)
+    MaxParsingErrors = 100,
+
+    // 다음 요소에 붙일 대기 주석 수 (0 = 무제한)
+    MaxPendingComments = 100,
 
     CollectParsingErrors = true
 };
@@ -154,3 +185,11 @@ var doc = IniConfigManager.Load("config.ini", Encoding.GetEncoding("euc-kr"));
 // 저장 시 인코딩 지정
 IniConfigManager.Save("config.ini", Encoding.UTF8, doc);
 ```
+
+## 파싱 호환성
+
+- 키/값 구분자는 `=`와 `:` 모두 로드할 수 있습니다.
+- 저장 시 구분자는 `SaveOptions.KeyValueSeparator`로 정합니다.
+- `;`와 `#` 주석 prefix는 로드 후 저장할 때 기본적으로 그대로 보존됩니다.
+- `[Section] trailing`처럼 섹션 헤더 뒤에 주석이 아닌 내용이 있으면 파싱 에러로 수집되고 해당 섹션 줄은 건너뜁니다.
+- 인용 값 안의 `\;`, `\#`, `\"`, `\\`, `\n`, `\t`, `\r`, `\0`, `\a`, `\b` escape sequence를 지원합니다.

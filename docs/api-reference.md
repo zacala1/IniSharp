@@ -7,26 +7,44 @@ INI 파일 로드/저장을 담당하는 정적 클래스입니다.
 ### Load
 
 ```csharp
-Document Load(string filePath)
-Document Load(string filePath, IniConfigOption option)
-Document Load(string filePath, Encoding encoding, IniConfigOption option)
-Document Load(Stream stream, Encoding encoding, IniConfigOption option)
+Document Load(string filePath, IniConfigOption? option = null)
+Document Load(string filePath, Encoding encoding, IniConfigOption? option = null)
+Document Load(Stream stream, Encoding encoding, IniConfigOption? option = null)
 ```
 
 ### LoadWithOptions
 
 ```csharp
 Document LoadWithOptions(string filePath, LoadOptions options)
+Task<Document> LoadWithOptionsAsync(string filePath, LoadOptions options, CancellationToken cancellationToken = default)
+```
+
+### LoadAsync
+
+```csharp
+Task<Document> LoadAsync(string filePath, IniConfigOption? option = null, CancellationToken cancellationToken = default)
+Task<Document> LoadAsync(string filePath, Encoding encoding, IniConfigOption? option = null, CancellationToken cancellationToken = default)
+Task<Document> LoadAsync(Stream stream, Encoding encoding, IniConfigOption? option = null, CancellationToken cancellationToken = default)
 ```
 
 ### Save
 
 ```csharp
-void Save(string filePath, Document doc)
-void Save(string filePath, Encoding encoding, Document doc)
+void Save(string filePath, Document doc, SaveOptions? options = null)
+void Save(string filePath, Encoding encoding, Document doc, SaveOptions? options = null)
 void Save(Stream stream, Encoding encoding, Document doc)
 void Save(Stream stream, Encoding encoding, Document doc, SaveOptions options)
 ```
+
+### SaveAsync
+
+```csharp
+Task SaveAsync(string filePath, Document document, SaveOptions? options = null, CancellationToken cancellationToken = default)
+Task SaveAsync(string filePath, Encoding encoding, Document document, SaveOptions? options = null, CancellationToken cancellationToken = default)
+Task SaveAsync(Stream stream, Encoding encoding, Document document, SaveOptions? options = null, CancellationToken cancellationToken = default)
+```
+
+`SaveAsync(Stream...)`는 대상 스트림에 직접 쓰며, 문서 전체를 `MemoryStream`에 한 번 더 버퍼링하지 않습니다.
 
 ### 이벤트
 
@@ -197,6 +215,7 @@ bool TryGetValue<T>(out T value)
 
 // 배열
 T[] GetValueArray<T>()
+T[] GetValueArray<T>(int maxElements)
 void SetValueArray<T>(T[] values)
 
 // 값 설정
@@ -233,6 +252,22 @@ Property WithPreComment(string comment)
 | `MaxPropertiesPerSection` | `int` | `0` | 섹션당 최대 속성 수 |
 | `MaxValueLength` | `int` | `0` | 값 최대 길이 |
 | `MaxLineLength` | `int` | `0` | 줄 최대 길이 |
+| `MaxParsingErrors` | `int` | `0` | 수집할 최대 파싱 에러 수 |
+| `MaxPendingComments` | `int` | `0` | 다음 요소에 붙일 대기 주석 최대 수 |
+
+---
+
+## SaveOptions
+
+저장 포맷 옵션 클래스입니다. `SaveOptions.Default`는 불변이므로 수정하려면 `Clone()` 또는 새 인스턴스를 사용합니다.
+
+| 이름 | 타입 | 기본값 | 설명 |
+|------|------|--------|------|
+| `KeyValueSeparator` | `string` | `" = "` | 키와 값 사이 구분자. 예: `"="`, `": "` |
+| `BlankLinesBetweenSections` | `int` | `1` | 섹션 사이 빈 줄 수. 허용 범위: 0~10 |
+| `BlankLineAfterDefaultSection` | `bool` | `true` | 기본 섹션 뒤 빈 줄 추가 여부 |
+| `NormalizeCommentPrefix` | `bool` | `false` | 모든 주석 prefix를 문서 기본 prefix로 정규화 |
+| `SpaceBeforeInlineComment` | `bool` | `true` | 인라인 주석 prefix 앞 공백 추가 여부 |
 
 ---
 
@@ -244,6 +279,7 @@ Property WithPreComment(string comment)
 
 | 이름 | 타입 | 설명 |
 |------|------|------|
+| `Encoding` | `Encoding` | 파일 읽기 인코딩. 기본값 UTF-8 |
 | `FileShare` | `FileShare` | 파일 공유 모드 |
 | `ConfigOption` | `IniConfigOption` | 파싱 옵션 |
 | `SectionFilter` | `Func<string, bool>?` | 섹션 필터 |
@@ -287,6 +323,8 @@ enum DuplicateKeyPolicyType
 Comment(string value)
 Comment(string prefix, string value)
 ```
+
+`prefix`는 단일 문자여야 하며, 값에는 줄바꿈 문자를 넣을 수 없습니다.
 
 ### 속성
 
@@ -417,6 +455,7 @@ void ValidateTypeStructure(Type type)
 - 중첩 깊이는 최대 1단계 (루트 클래스 → 섹션 클래스)
 - 2단계 이상 중첩 시 `IniSerializationException` 발생
 - 순환 참조 불허
+- `DateTimeOffset` 및 `Nullable<DateTimeOffset>` 지원
 
 ### Attributes
 

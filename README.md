@@ -77,10 +77,11 @@ IniConfigManager.Save("config.ini", doc, new SaveOptions
 
 // Async
 await IniConfigManager.SaveAsync("config.ini", doc);
+await IniConfigManager.SaveAsync("config.ini", Encoding.UTF8, doc);
 
-// To stream or TextWriter
-IniConfigManager.Save(stream, doc);
-IniConfigManager.Save(textWriter, doc);
+// To stream
+IniConfigManager.Save(stream, Encoding.UTF8, doc);
+await IniConfigManager.SaveAsync(stream, Encoding.UTF8, doc);
 ```
 
 ---
@@ -140,12 +141,13 @@ bool ok = doc.TryGetValue<int>("Database", "Port", out int portVal);
 
 ## Type Conversion
 
-`GetValue<T>()` supports: `string`, `bool`, `int`, `long`, `short`, `byte`, `float`, `double`, `decimal`, `char`, `uint`, `ulong`, `ushort`, `sbyte`, `DateTime`, `Guid`, enums.
+`GetValue<T>()` supports: `string`, `bool`, `int`, `long`, `short`, `byte`, `float`, `double`, `decimal`, `char`, `uint`, `ulong`, `ushort`, `sbyte`, `DateTime`, `DateTimeOffset`, `Guid`, enums.
 
 ```csharp
 int port    = prop.GetValue<int>();
 bool flag   = prop.GetValue<bool>();        // true/false/1/0/yes/no
 DateTime dt = prop.GetValue<DateTime>();
+DateTimeOffset dto = prop.GetValue<DateTimeOffset>();
 Guid id     = prop.GetValue<Guid>();
 MyEnum val  = prop.GetValue<MyEnum>();      // case-insensitive
 
@@ -171,6 +173,9 @@ string[] tags = prop.GetValueArray<string>(maxElements: 100);
 // Write
 prop.SetValueArray(new[] { 80, 443, 8080 });
 // Output: {80, 443, 8080}
+
+prop.SetValueArray(new[] { "", "server 1", "server2" });
+// Output: {"", "server 1", server2}
 ```
 
 ---
@@ -243,7 +248,7 @@ IniConfigManager.ParsingError += (s, e) =>
 
 Maps C# objects to INI documents using attributes. Maximum nesting depth is 1 (root properties → default section; complex-type properties → named sections).
 
-**Supported types:** primitives, `string`, `enum`, `DateTime`, `Guid`, and arrays of these.
+**Supported types:** primitives, `string`, `enum`, `DateTime`, `DateTimeOffset`, `Guid`, nullable variants, and arrays of these.
 
 ```csharp
 public class AppConfig
@@ -342,6 +347,9 @@ string xml = DocumentExporter.ToXml(doc, new XmlExportOptions
 });
 DocumentExporter.ToXmlFile(doc, "output.xml");
 
+// XML comments are sanitized when IncludeComments is enabled
+// so invalid XML comment sequences such as "--" do not break parsing.
+
 // CSV  — columns: Section, Key, Value [, Comment]
 string csv = DocumentExporter.ToCsv(doc);
 string csv = DocumentExporter.ToCsv(doc, new CsvExportOptions
@@ -354,6 +362,18 @@ string csv = DocumentExporter.ToCsv(doc, new CsvExportOptions
 });
 DocumentExporter.ToCsvFile(doc, "output.csv");
 ```
+
+---
+
+## Desktop Editor
+
+The Windows editor (`IniSharp.GUI`) includes:
+
+- open/save with detected encoding preservation, including UTF-8/UTF-16/UTF-32 BOM detection
+- section list and tree view navigation
+- key/value editing with undo/redo and save-point dirty tracking
+- section/property filters, drag-and-drop reordering, copy/cut/paste, find/replace, and replace-all with undo support
+- document comparison and selective merge
 
 ---
 
@@ -468,6 +488,7 @@ Supported syntax:
 ; pre-comment for section
 [SectionName]          ; inline comment
 Key = Value            ; inline comment
+Key: Value             ; ':' is also accepted on load
 QuotedKey = "value with spaces ; and semicolons"
 BoolKey = true         ; true | false | 1 | 0 | yes | no
 ArrayKey = {item1, item2, "item three"}
@@ -477,6 +498,8 @@ EscapedKey = "line1\nline2\ttabbed"
 **Escape sequences in quoted values:** `\n`, `\t`, `\r`, `\\`, `\"`, `\0`, `\a`, `\b`, `\;`, `\#`
 
 Values are automatically quoted on save when they contain `;`, `#`, `"`, newlines, or leading/trailing whitespace.
+Comment prefixes are preserved by default (`;` remains `;`, `#` remains `#`) unless `SaveOptions.NormalizeCommentPrefix` is enabled.
+Invalid content after a section header, for example `[Section] trailing`, is reported as a parsing error and the section line is skipped when error collection is enabled.
 
 ---
 
